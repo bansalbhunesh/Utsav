@@ -1,91 +1,36 @@
-# UTSAV monorepo
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-Production-shaped scaffold: **Next.js** (`apps/web`) + **Go/Gin API** (`services/api`) + **PostgreSQL** (`db/migrations`, `infra/docker`).
+## Getting Started
 
-Product source of truth (copy into repo for portability): `../UTSAV_PRODUCT_SPEC_v1.5.1.md` on this machine.
-
-**Step-by-step local run (including when Docker fails on Windows):** see [docs/LOCAL_DEV.md](docs/LOCAL_DEV.md).
-
-**Windows quick start** (Docker Desktop running): `pwsh -File scripts/start-local.ps1` from repo root — opens API + web in separate windows.
-
-## Prereqs
-
-- Docker (for Postgres)
-- Go 1.22+
-- Node 20+ (for Next.js)
-
-After freeing disk space, `go build ./cmd/server` and `npm run build` should succeed locally (output binary: `services/api/bin/utsav-api.exe` if you use the same build command).
-
-## Run Postgres
+First, run the development server:
 
 ```bash
-docker compose -f infra/docker/compose.yml up -d
-```
-
-## Run API
-
-```bash
-cd services/api
-export MIGRATIONS_PATH=../../db/migrations
-export DATABASE_URL=postgres://utsav:utsav@127.0.0.1:5432/utsav?sslmode=disable
-export HTTP_PORT=8080
-go mod tidy
-go run ./cmd/server
-```
-
-Windows PowerShell:
-
-```powershell
-cd services/api
-$env:MIGRATIONS_PATH="..\..\db\migrations"
-$env:DATABASE_URL="postgres://utsav:utsav@127.0.0.1:5432/utsav?sslmode=disable"
-$env:HTTP_PORT="8080"
-go mod tidy
-go run ./cmd/server
-```
-
-## Run Web
-
-```bash
-cd apps/web
-npm install
 npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
 ```
 
-`next.config.mjs` rewrites `/v1/*` to `NEXT_PUBLIC_API_URL` (default `http://127.0.0.1:8080`).
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-## Dev OTP
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-API reads `DEV_OTP_CODE` (default `123456`). OTP challenges use bcrypt hashes of that code in development.
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-## CI
+## Learn More
 
-See `.github/workflows/ci.yml` (runs on GitHub where disk is available).
+To learn more about Next.js, take a look at the following resources:
 
-[![CI](https://github.com/bhune/utsav/actions/workflows/ci.yml/badge.svg)](https://github.com/bhune/utsav/actions/workflows/ci.yml)
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
 
-Key jobs in the workflow:
-- `api` (unit/build)
-- `api-integration` (testcontainers migration check)
-- `web` (lint/build)
-- `e2e-smoke` (Playwright login -> create event -> RSVP)
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-### Re-run CI checks locally
+## Deploy on Vercel
 
-```bash
-# API unit
-cd services/api
-go test ./...
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
-# API integration (Docker required)
-go test -tags=integration ./internal/httpserver -run TestMigrationsAgainstPostgresContainer -v
-
-# Web lint/build
-cd ../../apps/web
-npm run lint
-npm run build
-
-# Playwright smoke (API + web running locally)
-npx playwright install
-npm run test:e2e
-```
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
