@@ -22,7 +22,7 @@ async function verifyAccessToken(token: string): Promise<boolean> {
   }
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname
   const token = request.cookies.get('utsav_access_token')?.value
   const isProtected = isProtectedPath(pathname)
