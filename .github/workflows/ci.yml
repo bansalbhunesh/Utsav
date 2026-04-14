@@ -87,11 +87,10 @@ jobs:
         working-directory: services/api
         run: go mod tidy
 
-      - name: Install web deps + Playwright browsers
+      - name: Install web deps
         working-directory: .
         run: |
           npm install
-          npx playwright install --with-deps chromium
 
       - name: Start API
         env:
@@ -117,20 +116,13 @@ jobs:
           echo $! > /tmp/utsav-web.pid
           for i in {1..60}; do curl -fsS http://127.0.0.1:3000 && break; sleep 2; done
 
-      - name: Run Playwright smoke
+      - name: Run e2e smoke
         env:
           E2E_BASE_URL: http://127.0.0.1:3000
           E2E_PHONE: +919876543210
           E2E_OTP: "123456"
         working-directory: .
         run: npm run test:e2e
-
-      - name: Upload e2e artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: playwright-report
 
       - name: Cleanup
         if: always()
