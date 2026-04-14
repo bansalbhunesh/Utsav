@@ -1,8 +1,9 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+// Authoritative API bridge for UTSAV v1.5
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
 
+// --- Host Auth Management ---
 const tokenKey = "utsav_access_token";
 const refreshKey = "utsav_refresh_token";
-const guestTokenKey = "utsav_guest_token";
 
 export function getAccessToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -10,55 +11,77 @@ export function getAccessToken(): string | null {
 }
 
 export function setTokens(access: string, refresh?: string) {
+  if (typeof window === "undefined") return;
   localStorage.setItem(tokenKey, access);
   if (refresh) localStorage.setItem(refreshKey, refresh);
 }
 
-export function getGuestToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(guestTokenKey);
+// --- Guest Session Management ---
+const guestTokenKey = "utsav_guest_token";
+
+export const setGuestToken = (token: string) => {
+  if (typeof window !== "undefined") {
+    localStorage.setItem(guestTokenKey, token);
+  }
 }
 
-export function setGuestToken(t: string) {
-  localStorage.setItem(guestTokenKey, t);
+export const getGuestToken = (): string | null => {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem(guestTokenKey);
+  }
+  return null;
 }
 
-export async function guestApiFetch<T>(
-  path: string,
-  init: RequestInit & { json?: unknown } = {},
-): Promise<T> {
-  const url = path.startsWith("http") ? path : `${API_URL}${path}`;
-  const headers = new Headers(init.headers);
-  if (init.json !== undefined) headers.set("Content-Type", "application/json");
-  const g = getGuestToken();
-  if (g) headers.set("Authorization", `Bearer ${g}`);
+// --- Authorized API Fetcher (Host) ---
+export async function apiFetch<T>(endpoint: string, options: RequestInit & { json?: any } = {}): Promise<T> {
+  const headers = new Headers(options.headers)
+  const token = getAccessToken()
   
-  const res = await fetch(url, {
-    ...init,
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+
+  if (options.json) {
+    headers.set('Content-Type', 'application/json')
+    options.body = JSON.stringify(options.json)
+  }
+
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    ...options,
     headers,
-    body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
-  });
-  
-  if (!res.ok) throw new Error(await res.text());
-  return (await res.json()) as T;
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Unknown API error' }))
+    throw new Error(error.error || `HTTP ${response.status}`)
+  }
+
+  return response.json()
 }
 
-export async function apiFetch<T>(
-  path: string,
-  init: RequestInit & { json?: unknown } = {},
-): Promise<T> {
-  const url = path.startsWith("http") ? path : `${API_URL}${path}`;
-  const headers = new Headers(init.headers);
-  if (init.json !== undefined) headers.set("Content-Type", "application/json");
-  const token = getAccessToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+// --- Guest API Fetcher (RSVP/OTP) ---
+export async function guestApiFetch<T>(endpoint: string, options: RequestInit & { json?: any } = {}): Promise<T> {
+  const headers = new Headers(options.headers)
+  const token = getGuestToken()
   
-  const res = await fetch(url, {
-    ...init,
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+  
+  if (options.json !== undefined) {
+    headers.set('Content-Type', 'application/json')
+    options.body = JSON.stringify(options.json)
+  }
+
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    ...options,
     headers,
-    body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
-  });
-  
-  if (!res.ok) throw new Error(await res.text());
-  return (await res.json()) as T;
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Unknown API error' }))
+    throw new Error(error.error || `HTTP ${response.status}`)
+  }
+
+  return response.json()
 }

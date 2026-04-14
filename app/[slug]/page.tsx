@@ -1,6 +1,12 @@
+<<<<<<< HEAD
 import { supabase } from '@/lib/supabase/client'
 import { notFound } from 'next/navigation'
 import { RSVPForm } from '@/components/event/RSVPForm'
+=======
+import { notFound } from 'next/navigation'
+import { RSVPForm } from '@/components/event/RSVPForm'
+import { guestApiFetch } from '@/lib/api'
+>>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
 import { 
   Calendar, 
   MapPin, 
@@ -24,6 +30,7 @@ interface EventPageProps {
 }
 
 async function getEventData(slug: string) {
+<<<<<<< HEAD
   const { data: event } = await supabase
     .from('events')
     .select('*, profiles(full_name), sub_events(*)')
@@ -31,6 +38,15 @@ async function getEventData(slug: string) {
     .single()
 
   return event
+=======
+  try {
+    const data = await guestApiFetch<{ event: any }>(`/v1/public/events/${slug}`)
+    return data.event
+  } catch (err) {
+    console.error('Failed to load event data:', err)
+    return null
+  }
+>>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
 }
 
 export default async function GuestEventPage({ params }: EventPageProps) {
@@ -42,7 +58,11 @@ export default async function GuestEventPage({ params }: EventPageProps) {
 
   const hostName = (event.profiles as any)?.full_name || 'the Hosts'
   const subEvents = event.sub_events || []
+<<<<<<< HEAD
   const themeColor = event.branding_color || '#EA580C' // Fallback to orange-600
+=======
+  const themeColor = event.branding_color || '#EA580C'
+>>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
 
   return (
     <div className="min-h-screen bg-white" style={{ '--theme-color': themeColor } as any}>
@@ -52,6 +72,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
         .border-theme { border-color: var(--theme-color); }
         .ring-theme { --tw-ring-color: var(--theme-color); }
       `}</style>
+<<<<<<< HEAD
       {/* Hero Section */}
       <section className="relative h-[60vh] min-h-[500px] w-full flex items-center justify-center overflow-hidden">
         {event.cover_image && (
@@ -63,11 +84,20 @@ export default async function GuestEventPage({ params }: EventPageProps) {
         )}
         <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
         
+=======
+      
+      <section className="relative h-[60vh] min-h-[500px] w-full flex items-center justify-center overflow-hidden">
+        {event.cover_image_url && (
+          <img src={event.cover_image_url} alt="Cover" className="absolute inset-0 w-full h-full object-cover" />
+        )}
+        <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
+>>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
         <div className="relative text-center px-6 space-y-6 max-w-3xl">
           <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 px-4 py-2 rounded-full text-white text-xs font-bold uppercase tracking-widest animate-in fade-in slide-in-from-top-4 duration-1000">
             <Sparkles className="h-4 w-4 text-theme/70" />
             Official Invitation
           </div>
+<<<<<<< HEAD
           
           <h1 className="text-4xl sm:text-7xl font-bold font-heading text-white tracking-tight animate-in fade-in slide-in-from-bottom-4 duration-1000">
             {event.title}
@@ -114,12 +144,42 @@ export default async function GuestEventPage({ params }: EventPageProps) {
         )}
 
         {/* Schedule Section */}
+=======
+          <h1 className="text-4xl sm:text-7xl font-bold text-white tracking-tight animate-in fade-in slide-in-from-bottom-4 duration-1000">
+            {event.title}
+          </h1>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 text-white/90 font-medium animate-in fade-in duration-1000 delay-300">
+            <div className="flex items-center gap-2">
+              <Calendar className="h-5 w-5 text-theme/70" />
+              {event.date_start ? format(new Date(event.date_start), 'PPP') : 'Date TBD'}
+            </div>
+            <div className="flex items-center gap-2">
+              <Heart className="h-5 w-5 text-theme/70" />
+              Hosted by {hostName}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <main className="max-w-4xl mx-auto px-6 py-16 space-y-20">
+        <section className="text-center space-y-10">
+           <h2 className="text-2xl font-bold text-zinc-900">Are you joining us?</h2>
+           <RSVPForm 
+             eventId={event.id} 
+             eventTitle={event.title} 
+             eventSlug={params.slug} 
+             subEvents={subEvents} 
+           />
+        </section>
+
+>>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
         <section className="space-y-10">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-zinc-900 flex items-center gap-3">
               <Clock className="w-8 h-8 text-theme" />
               Event Schedule
             </h2>
+<<<<<<< HEAD
             <div className="h-px flex-1 bg-zinc-100 ml-6 hidden sm:block" />
           </div>
 
@@ -251,6 +311,19 @@ export default async function GuestEventPage({ params }: EventPageProps) {
         </div>
         <p className="text-[10px] text-zinc-400 uppercase tracking-widest font-bold">Operating System for India's Events</p>
       </footer>
+=======
+          </div>
+          <div className="grid grid-cols-1 gap-6">
+            {subEvents.map((sub: any) => (
+              <div key={sub.id} className="p-6 rounded-[32px] border border-zinc-100 bg-white hover:border-orange-100 transition-all">
+                <h3 className="text-xl font-bold">{sub.name}</h3>
+                <p className="text-zinc-500">{sub.venue_label} · {sub.starts_at ? format(new Date(sub.starts_at), 'p') : ''}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      </main>
+>>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
     </div>
   )
 }

@@ -25,6 +25,9 @@ func (s *Server) Mount(r *gin.Engine) {
 	v1.GET("/events/:id/guests", s.listGuests)
 	v1.POST("/events/:id/guests", s.postGuest)
 	v1.POST("/events/:id/guests/import", s.postGuestsImport)
+	v1.GET("/events/:id/vendors", s.listVendors)
+	v1.POST("/events/:id/vendors", s.postVendor)
+	v1.DELETE("/events/:id/vendors/:vendorId", s.deleteVendor)
 	v1.POST("/events/:id/cash-shagun", s.postCashShagun)
 
 	v1.GET("/events/:id/rsvps", s.listRSVPsHost)
