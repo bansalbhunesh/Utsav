@@ -1,16 +1,57 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { jwtVerify } from 'jose'
 
-export function middleware(request: NextRequest) {
+const protectedPaths = ['/dashboard', '/organiser', '/billing', '/events']
+const textEncoder = new TextEncoder()
+
+function isProtectedPath(pathname: string): boolean {
+  return protectedPaths.some((path) => pathname.startsWith(path))
+}
+
+async function verifyAccessToken(token: string): Promise<boolean> {
+  const secret = process.env.JWT_SECRET
+  if (!secret) return false
+  try {
+    const { payload } = await jwtVerify(token, textEncoder.encode(secret), {
+      algorithms: ['HS256'],
+    })
+    return typeof payload.sub === 'string' && payload.sub.length > 0
+  } catch {
+    return false
+  }
+}
+
+export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
   const token = request.cookies.get('utsav_access_token')?.value
-  const protectedPaths = ['/dashboard', '/organiser', '/billing', '/events']
-  const isProtected = protectedPaths.some((path) => pathname.startsWith(path))
+  const isProtected = isProtectedPath(pathname)
+
+  // If already authenticated, avoid showing login screen.
+  if (pathname === '/login' && token) {
+    const valid = await verifyAccessToken(token)
+    if (valid) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/dashboard'
+      return NextResponse.redirect(url)
+    }
+  }
 
   if (isProtected && !token) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
+  }
+
+  if (isProtected && token) {
+    const valid = await verifyAccessToken(token)
+    if (!valid) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/login'
+      const response = NextResponse.redirect(url)
+      response.cookies.delete('utsav_access_token')
+      return response
+    }
   }
 
   return NextResponse.next()
