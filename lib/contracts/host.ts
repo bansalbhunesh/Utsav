@@ -56,6 +56,39 @@ export const hostBroadcastsResponseSchema = z.object({
   broadcasts: z.array(hostBroadcastSchema).default([]),
 })
 
+export const hostRSVPRowSchema = z.object({
+  id: z.string(),
+  guest_phone: z.string(),
+  sub_event_id: z.string(),
+  status: z.string(),
+})
+
+export const hostRSVPResponseSchema = z.object({
+  rsvps: z.array(hostRSVPRowSchema).default([]),
+})
+
+export const hostGalleryAssetSchema = z.object({
+  id: z.string(),
+  section: z.string(),
+  object_key: z.string(),
+  status: z.enum(['pending', 'approved', 'rejected']),
+  url: z.string().optional(),
+  created_at: z.string().optional(),
+})
+
+export const hostGalleryAssetsResponseSchema = z.object({
+  assets: z.array(hostGalleryAssetSchema).default([]),
+})
+
+export const hostGalleryPresignResponseSchema = z.object({
+  upload: z.object({
+    method: z.string(),
+    url: z.string(),
+    headers: z.record(z.string(), z.string()),
+    object_key: z.string(),
+  }),
+})
+
 export function parseHostEvent(input: unknown) {
   return hostEventSchema.parse(input)
 }
@@ -78,4 +111,16 @@ export function parseHostSubEventsResponse(input: unknown) {
 
 export function parseHostBroadcastsResponse(input: unknown) {
   return hostBroadcastsResponseSchema.parse(input)
+}
+
+export function parseHostRSVPResponse(input: unknown) {
+  return hostRSVPResponseSchema.parse(input)
+}
+
+export function parseHostGalleryAssetsResponse(input: unknown) {
+  return hostGalleryAssetsResponseSchema.parse(input)
+}
+
+export function parseHostGalleryPresignResponse(input: unknown) {
+  return hostGalleryPresignResponseSchema.parse(input)
 }

@@ -3,15 +3,14 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { apiFetch } from "@/lib/api";
-
-type UploadSpec = {
-  method: string;
-  url: string;
-  headers: Record<string, string>;
-  object_key: string;
-};
+import { useQuery } from "@tanstack/react-query";
+import { getUserFacingError } from "@/lib/error-messages";
+import {
+  parseHostGalleryAssetsResponse,
+  parseHostGalleryPresignResponse,
+} from "@/lib/contracts/host";
 
 type Asset = {
   id: string;
@@ -25,37 +24,27 @@ type Asset = {
 export default function EventGalleryPage() {
   const params = useParams();
   const id = String(params.id || "");
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [err, setErr] = useState<string | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
   const [status, setStatus] = useState<"pending" | "approved" | "rejected" | "all">("pending");
   const [section, setSection] = useState("moments");
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    const q = status === "all" ? "" : `?status=${status}`;
-    const d = await apiFetch<{ assets: Asset[] }>(`/v1/events/${id}/gallery/assets${q}`);
-    setAssets(d.assets || []);
-  }, [id, status]);
-
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        await load();
-      } catch (e) {
-        if (active) setErr(String(e));
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [load]);
+  const { data, error, refetch } = useQuery({
+    queryKey: ["event-gallery-assets", id, status],
+    queryFn: async () => {
+      const q = status === "all" ? "" : `?status=${status}`;
+      const raw = await apiFetch<unknown>(`/v1/events/${id}/gallery/assets${q}`);
+      return parseHostGalleryAssetsResponse(raw);
+    },
+  });
+  const assets: Asset[] = data?.assets || [];
+  const err = error ? getUserFacingError(error, "Failed to load gallery assets.") : actionErr;
 
   async function onUploadFile(file: File) {
-    setErr(null);
+    setActionErr(null);
     setBusy(true);
     try {
-      const p = await apiFetch<{ upload: UploadSpec }>(`/v1/events/${id}/gallery/presign`, {
+      const presignRaw = await apiFetch<unknown>(`/v1/events/${id}/gallery/presign`, {
         method: "POST",
         json: {
           section,
@@ -63,6 +52,7 @@ export default function EventGalleryPage() {
           content_type: file.type || "application/octet-stream",
         },
       });
+      const p = parseHostGalleryPresignResponse(presignRaw);
       const upload = p.upload;
       const put = await fetch(upload.url, {
         method: upload.method || "PUT",
@@ -81,24 +71,24 @@ export default function EventGalleryPage() {
           status: "pending",
         },
       });
-      await load();
+      await refetch();
     } catch (e) {
-      setErr(String(e));
+      setActionErr(getUserFacingError(e, "Failed to upload gallery asset."));
     } finally {
       setBusy(false);
     }
   }
 
   async function moderate(assetId: string, next: "approved" | "rejected" | "pending") {
-    setErr(null);
+    setActionErr(null);
     try {
       await apiFetch(`/v1/events/${id}/gallery/assets/${assetId}`, {
         method: "PATCH",
         json: { status: next },
       });
-      await load();
+      await refetch();
     } catch (e) {
-      setErr(String(e));
+      setActionErr(getUserFacingError(e, "Failed to update moderation status."));
     }
   }
 
