@@ -1,9 +1,9 @@
-import { supabase } from '@/lib/supabase/client'
 import { notFound } from 'next/navigation'
 import { GalleryGrid } from '@/components/event/GalleryGrid'
 import { ImageIcon, ChevronLeft } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
+import { guestApiFetch } from '@/lib/api'
 
 interface GalleryPageProps {
   params: {
@@ -12,12 +12,13 @@ interface GalleryPageProps {
 }
 
 async function getEventData(slug: string) {
-  const { data: event } = await supabase
-    .from('events')
-    .select('id, title, items:sub_events(name)')
-    .eq('slug', slug)
-    .single()
-  return event
+  try {
+    const data = await guestApiFetch<any>(`/v1/public/events/${slug}`)
+    return data?.event ?? data
+  } catch (err) {
+    console.error('Failed to load gallery event data:', err)
+    return null
+  }
 }
 
 export default async function GalleryPage({ params }: GalleryPageProps) {
@@ -52,7 +53,7 @@ export default async function GalleryPage({ params }: GalleryPageProps) {
            <p className="text-zinc-500 font-medium">Every smile, every dance, and every blessing captured by the ones who matter most.</p>
         </div>
 
-        <GalleryGrid eventId={event.id} />
+        <GalleryGrid eventSlug={params.slug} />
       </div>
     </main>
   )

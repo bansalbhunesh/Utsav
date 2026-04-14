@@ -16,6 +16,12 @@ export function setTokens(access: string, refresh?: string) {
   if (refresh) localStorage.setItem(refreshKey, refresh);
 }
 
+export function clearTokens() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(tokenKey);
+  localStorage.removeItem(refreshKey);
+}
+
 // --- Guest Session Management ---
 const guestTokenKey = "utsav_guest_token";
 

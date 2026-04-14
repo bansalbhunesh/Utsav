@@ -1,17 +1,14 @@
-import { supabase } from '@/lib/supabase/client'
 import { notFound } from 'next/navigation'
 import { Heart, Sparkles, Image as ImageIcon, IndianRupee, MessageCircle } from 'lucide-react'
 import { paymentService } from '@/lib/services/PaymentService'
+import { guestApiFetch } from '@/lib/api'
 
 interface ShagunEntry {
   id: string
-  amount: number
-  message?: string
-  sender_name: string
-}
-
-interface EventMedia {
-  id: string
+  blessing_note?: string
+  meta?: {
+    sender_name?: string
+  }
 }
 
 interface MemoryBookProps {
@@ -21,21 +18,35 @@ interface MemoryBookProps {
 }
 
 async function getStats(slug: string) {
-  const { data: event } = await supabase
-    .from('events')
-    .select('*, shagun(*), event_media(*)')
-    .eq('slug', slug)
-    .single()
-  return event
+  try {
+    const [eventData, galleryData, memoryData] = await Promise.all([
+      guestApiFetch<any>(`/v1/public/events/${slug}`),
+      guestApiFetch<{ assets?: { id: string }[] }>(`/v1/public/events/${slug}/gallery`),
+      guestApiFetch<any>(`/v1/public/memory/${slug}-memory`).catch(() => null),
+    ])
+
+    const event = eventData?.event ?? eventData
+    if (!event) return null
+
+    const highlights = memoryData?.payload?.highlights || {}
+    return {
+      event,
+      totalWishes: Number(highlights.shagun_count || 0),
+      totalShagunPaise: Number(highlights.shagun_total_paise || 0),
+      totalPhotos: Number(galleryData.assets?.length || 0),
+      featuredWishes: (memoryData?.payload?.featured_wishes || []) as ShagunEntry[],
+    }
+  } catch (err) {
+    console.error('Failed to load memory book stats:', err)
+    return null
+  }
 }
 
 export default async function MemoryBookPage({ params }: MemoryBookProps) {
-  const event = await getStats(params.slug)
-  if (!event) notFound()
+  const data = await getStats(params.slug)
+  if (!data) notFound()
 
-  const totalShagun = (event.shagun as ShagunEntry[])?.reduce((acc: number, curr: ShagunEntry) => acc + Number(curr.amount), 0) || 0
-  const totalWishes = event.shagun?.length || 0
-  const totalPhotos = event.event_media?.length || 0
+  const { event, totalWishes, totalShagunPaise, totalPhotos, featuredWishes } = data
 
   return (
     <main className="min-h-screen bg-linear-to-b from-orange-50/50 to-white pb-32">
@@ -73,7 +84,7 @@ export default async function MemoryBookPage({ params }: MemoryBookProps) {
               <div className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center text-white mx-auto mb-4 border border-white/20">
                  <IndianRupee className="w-6 h-6" />
               </div>
-              <p className="text-4xl font-bold font-heading text-white">{paymentService.formatINR(totalShagun)}</p>
+              <p className="text-4xl font-bold font-heading text-white">{paymentService.formatINR(totalShagunPaise / 100)}</p>
               <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Digital Shagun</p>
            </div>
 
@@ -98,19 +109,19 @@ export default async function MemoryBookPage({ params }: MemoryBookProps) {
            </div>
 
            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {(event.shagun as ShagunEntry[])?.filter((s) => s.message).slice(0, 10).map((shagun) => (
+              {featuredWishes.filter((s) => s.blessing_note).slice(0, 10).map((shagun) => (
                 <div key={shagun.id} className="p-8 rounded-[32px] bg-white border border-zinc-100 shadow-sm relative overflow-hidden group hover:border-orange-200 transition-colors">
                    <div className="absolute -top-4 -right-4 opacity-5 group-hover:opacity-10 transition-opacity">
                       <Heart className="w-24 h-24 text-orange-600" />
                    </div>
                    <p className="text-lg text-zinc-700 font-serif leading-relaxed line-clamp-4 relative z-10 italic">
-                     &quot;{shagun.message}&quot;
+                     &quot;{shagun.blessing_note}&quot;
                    </p>
                    <div className="mt-6 flex items-center gap-3 relative z-10">
                       <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center text-orange-700 text-[10px] font-bold">
-                         {shagun.sender_name?.charAt(0) || 'G'}
+                         {shagun.meta?.sender_name?.charAt(0) || 'G'}
                       </div>
-                      <p className="text-sm font-bold text-zinc-900">{shagun.sender_name}</p>
+                      <p className="text-sm font-bold text-zinc-900">{shagun.meta?.sender_name || 'Guest'}</p>
                    </div>
                 </div>
               ))}

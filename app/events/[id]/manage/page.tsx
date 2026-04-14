@@ -16,11 +16,12 @@ import {
   TrendingUp,
   Clock
 } from 'lucide-react'
-import { supabase } from '@/lib/supabase/client'
 import { FastCashLogger } from '@/components/event/FastCashLogger'
 import { VendorManager } from '@/components/event/VendorManager'
 import { BroadcastCenter } from '@/components/event/BroadcastCenter'
 import { paymentService } from '@/lib/services/PaymentService'
+import { apiFetch } from '@/lib/api'
+import { cn } from '@/lib/utils'
 
 export default function EventManagePage() {
   const params = useParams()
@@ -32,21 +33,20 @@ export default function EventManagePage() {
   const [isLoading, setIsLoading] = useState(true)
 
   const fetchData = async () => {
-    const { data: eventData } = await supabase
-      .from('events')
-      .select('*')
-      .eq('id', eventId)
-      .single()
-    
-    const { data: shagunData } = await supabase
-      .from('shagun_entries')
-      .select('*')
-      .eq('event_id', eventId)
-      .order('created_at', { ascending: false })
-
-    setEvent(eventData)
-    setShagun(shagunData || [])
-    setIsLoading(false)
+    try {
+      const [eventData, shagunData] = await Promise.all([
+        apiFetch<any>(`/v1/events/${eventId}`),
+        apiFetch<{ shagun: any[] }>(`/v1/events/${eventId}/shagun`),
+      ])
+      setEvent(eventData)
+      setShagun(shagunData.shagun || [])
+    } catch (err) {
+      console.error('Failed to load event management data:', err)
+      setEvent(null)
+      setShagun([])
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   useEffect(() => {

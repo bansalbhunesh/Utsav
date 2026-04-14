@@ -1,26 +1,31 @@
-import { supabase } from './supabase/client'
+import { apiFetch, clearTokens, setTokens } from './api'
 
 export const signInWithPhone = async (phone: string) => {
-  const { data, error } = await supabase.auth.signInWithOtp({
-    phone,
-    options: {
-      // For India, we usually need the +91 prefix.
-      // We can handle formatting in the UI.
-    }
-  })
-  return { data, error }
+  try {
+    const data = await apiFetch<{ ok: boolean }>('/v1/auth/otp/request', {
+      method: 'POST',
+      json: { phone },
+    })
+    return { data, error: null }
+  } catch (error: any) {
+    return { data: null, error }
+  }
 }
 
 export const verifyOtp = async (phone: string, token: string) => {
-  const { data, error } = await supabase.auth.verifyOtp({
-    phone,
-    token,
-    type: 'sms'
-  })
-  return { data, error }
+  try {
+    const data = await apiFetch<{ access_token: string; refresh_token?: string }>('/v1/auth/otp/verify', {
+      method: 'POST',
+      json: { phone, code: token },
+    })
+    setTokens(data.access_token, data.refresh_token)
+    return { data, error: null }
+  } catch (error: any) {
+    return { data: null, error }
+  }
 }
 
 export const signOut = async () => {
-  const { error } = await supabase.auth.signOut()
-  return { error }
+  clearTokens()
+  return { error: null }
 }

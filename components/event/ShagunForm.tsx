@@ -9,8 +9,8 @@ import { paymentService } from '@/lib/services/PaymentService'
 import { Sparkles, Check, Send, Heart, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Event } from '@/types'
-import { supabase } from '@/lib/supabase/client'
 import { Confetti } from '@/components/ui/Confetti'
+import { guestApiFetch } from '@/lib/api'
 
 
 interface ShagunFormProps {
@@ -55,20 +55,15 @@ export function ShagunForm({ event, hostName }: ShagunFormProps) {
     })
 
     if (success) {
-      // 2. Record the transaction in Supabase
+      // 2. Record the transaction with backend authoritative API
       try {
-        const { error } = await supabase
-          .from('shagun_entries')
-          .insert({
-            event_id: event.id,
-            channel: 'UPI',
-            amount_paise: Math.round(parseFloat(amount) * 100),
-            blessing_note: message,
-            status: 'guest_reported',
-            meta: { sender_name: senderName }
+        await guestApiFetch(`/v1/public/events/${event.slug}/shagun/report`, {
+          method: 'POST',
+          json: {
+            amount_inr: parseFloat(amount),
+            blessing_note: message
           })
-        
-        if (error) throw error
+        })
         setIsSuccess(true)
       } catch (err) {
         console.error('Failed to record shagun', err)

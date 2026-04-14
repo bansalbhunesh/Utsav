@@ -10,7 +10,9 @@ interface Profile {
 
 interface ShagunEvent extends Event {
   profiles?: Profile
+  cover_image_url?: string
   cover_image?: string
+  host_upi_vpa?: string
 }
 
 interface ShagunPageProps {
@@ -40,7 +42,7 @@ export default async function ShagunPage({ params }: ShagunPageProps) {
       <div 
         className="h-[300px] w-full bg-zinc-900 flex items-center justify-center relative overflow-hidden"
         style={{
-          backgroundImage: event.cover_image ? `url(${event.cover_image})` : 'none',
+          backgroundImage: (event.cover_image_url || event.cover_image) ? `url(${event.cover_image_url || event.cover_image})` : 'none',
           backgroundSize: 'cover',
           backgroundPosition: 'center'
         }}
@@ -65,7 +67,10 @@ export default async function ShagunPage({ params }: ShagunPageProps) {
               Your shagun will be sent directly to <span className="font-bold text-zinc-800">{hostName}</span> via UPI.
             </p>
           </div>
-          <ShagunForm event={event} hostName={hostName} />
+          <ShagunForm
+            event={{ ...event, upi_id: event.upi_id || event.host_upi_vpa } as any}
+            hostName={hostName}
+          />
         </div>
       </div>
     </main>

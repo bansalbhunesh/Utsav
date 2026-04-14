@@ -1,28 +1,33 @@
 'use client'
 
 import { useEffect } from 'react'
-import { supabase } from '@/lib/supabase/client'
+import { apiFetch, getAccessToken } from '@/lib/api'
 import { useAuthStore } from '@/store/auth-store'
 
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
   const { setUser, setLoading } = useAuthStore()
 
   useEffect(() => {
-    // Initial fetch
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setUser(user)
-      setLoading(false)
-    })
+    const bootstrapAuth = async () => {
+      const token = getAccessToken()
+      if (!token) {
+        setUser(null)
+        setLoading(false)
+        return
+      }
 
-    // Listen for changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-      setLoading(false)
-    })
-
-    return () => {
-      subscription.unsubscribe()
+      try {
+        const me = await apiFetch<{ id: string; phone: string; display_name?: string }>('/v1/me')
+        setUser({ id: me.id, phone: me.phone, user_metadata: { display_name: me.display_name || '' } } as any)
+      } catch (err) {
+        console.error('Failed to hydrate auth session:', err)
+        setUser(null)
+      } finally {
+        setLoading(false)
+      }
     }
+
+    void bootstrapAuth()
   }, [setUser, setLoading])
 
   return <>{children}</>

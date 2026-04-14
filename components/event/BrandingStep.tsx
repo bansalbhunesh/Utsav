@@ -6,8 +6,8 @@ import { Button } from '@/components/ui/button'
 import { useEventCreationStore } from '@/store/event-creation-store'
 import { Check, Loader2, Sparkles, Palette } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { supabase } from '@/lib/supabase/client'
 import { useAuthStore } from '@/store/auth-store'
+import { apiFetch } from '@/lib/api'
 
 const themes = [
   { id: 'default', name: 'UTSAV Classic', primary: '#EA580C', secondary: '#FFF7ED' },
@@ -42,64 +42,58 @@ export function BrandingStep() {
     const finalBranding = themes.find(t => t.id === selectedTheme)
 
     try {
-      // 1. Create the event
-      const { data: event, error: eventError } = await supabase
-        .from('events')
-        .insert({
-          ...eventData,
-          upi_id: eventData.upi_id,
-          owner_user_id: user.id,
-          branding_color: finalBranding?.primary,
-          branding: {
-            theme_name: selectedTheme,
-          }
-        })
-        .select()
-        .single()
+      const eventType = (eventData.event_type || 'WEDDING').toLowerCase()
+      const branding = {
+        theme_name: selectedTheme,
+        primary_color: finalBranding?.primary || '#EA580C',
+      }
 
-      if (eventError) throw eventError
+      // 1. Create event via authoritative backend
+      const event = await apiFetch<{ id: string; slug: string }>('/v1/events', {
+        method: 'POST',
+        json: {
+          slug: eventData.slug,
+          title: eventData.title,
+          event_type: eventType,
+          cover_image_url: eventData.cover_image,
+          date_start: eventData.start_date,
+          date_end: eventData.end_date,
+          privacy: eventData.is_public ? 'public' : 'private',
+          branding,
+          host_upi_vpa: eventData.upi_id,
+          toggles: eventData.settings || {},
+        },
+      })
 
-      // 2. Add sub-events
+      // 2. Add sub-events via backend
       if (subEvents.length > 0) {
-        const { error: subError } = await supabase
-          .from('sub_events')
-          .insert(
-            subEvents.map(sub => ({
-              ...sub,
-              event_id: event.id
-            }))
-          )
-        if (subError) throw subError
+        for (const sub of subEvents) {
+          await apiFetch(`/v1/events/${event.id}/sub-events`, {
+            method: 'POST',
+            json: {
+              name: sub.name,
+              sub_type: sub.type || 'main',
+              starts_at: sub.date_time || null,
+              ends_at: null,
+              venue_label: sub.venue_name || '',
+              dress_code: sub.dress_code || '',
+              description: sub.description || '',
+            },
+          })
+        }
       }
 
-      // 3. Add owner as OWNER in event_members
-      const { error: memberError } = await supabase
-        .from('event_members')
-        .insert({
-          event_id: event.id,
-          user_id: user.id,
-          role: 'OWNER'
-        })
-      if (memberError) throw memberError
-
-      // 4. Add co-owner if provided
+      // 3. Invite co-owner if provided
       if (eventData.co_owner_name && eventData.co_owner_contact) {
-        // NOTE: In a real app, this would send an invite or look up a user by contact.
-        // For MVP, we'll store the intent/contact. For now, we skip if no user ID found.
-        // But we can add it to a 'guest' list or a dedicated 'invites' table.
-        // For now, we'll just log it as a guest with the CO_OWNER side-info or similar.
-        const { error: coOwnerError } = await supabase
-        .from('event_members')
-        .insert({
-          event_id: event.id,
-          user_id: user.id, // Using current user for now as a placeholder for co-owner logic
-          role: 'CO_OWNER',
-          // Metadata or temporary contact info could go here in Phase 2
+        await apiFetch(`/v1/events/${event.id}/members`, {
+          method: 'POST',
+          json: {
+            invited_phone: eventData.co_owner_contact,
+            role: 'co_owner',
+          },
         })
-        if (coOwnerError) console.error('Co-owner addition skipped/failed', coOwnerError)
       }
 
-      // Success!
       reset()
       router.push(`/dashboard?success=true&event=${event.slug}`)
 

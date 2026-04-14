@@ -1,12 +1,6 @@
-<<<<<<< HEAD
-import { supabase } from '@/lib/supabase/client'
-import { notFound } from 'next/navigation'
-import { RSVPForm } from '@/components/event/RSVPForm'
-=======
 import { notFound } from 'next/navigation'
 import { RSVPForm } from '@/components/event/RSVPForm'
 import { guestApiFetch } from '@/lib/api'
->>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
 import { 
   Calendar, 
   MapPin, 
@@ -30,15 +24,6 @@ interface EventPageProps {
 }
 
 async function getEventData(slug: string) {
-<<<<<<< HEAD
-  const { data: event } = await supabase
-    .from('events')
-    .select('*, profiles(full_name), sub_events(*)')
-    .eq('slug', slug)
-    .single()
-
-  return event
-=======
   try {
     const data = await guestApiFetch<{ event: any }>(`/v1/public/events/${slug}`)
     return data.event
@@ -46,7 +31,6 @@ async function getEventData(slug: string) {
     console.error('Failed to load event data:', err)
     return null
   }
->>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
 }
 
 export default async function GuestEventPage({ params }: EventPageProps) {
@@ -58,11 +42,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
 
   const hostName = (event.profiles as any)?.full_name || 'the Hosts'
   const subEvents = event.sub_events || []
-<<<<<<< HEAD
-  const themeColor = event.branding_color || '#EA580C' // Fallback to orange-600
-=======
   const themeColor = event.branding_color || '#EA580C'
->>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
 
   return (
     <div className="min-h-screen bg-white" style={{ '--theme-color': themeColor } as any}>
@@ -72,68 +52,50 @@ export default async function GuestEventPage({ params }: EventPageProps) {
         .border-theme { border-color: var(--theme-color); }
         .ring-theme { --tw-ring-color: var(--theme-color); }
       `}</style>
-<<<<<<< HEAD
-      {/* Hero Section */}
       <section className="relative h-[60vh] min-h-[500px] w-full flex items-center justify-center overflow-hidden">
-        {event.cover_image && (
-          <img 
-            src={event.cover_image} 
-            alt="Event Background" 
-            className="absolute inset-0 w-full h-full object-cover" 
+        {(event.cover_image_url || event.cover_image) && (
+          <img
+            src={event.cover_image_url || event.cover_image}
+            alt="Cover"
+            className="absolute inset-0 w-full h-full object-cover"
           />
         )}
         <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
-        
-=======
-      
-      <section className="relative h-[60vh] min-h-[500px] w-full flex items-center justify-center overflow-hidden">
-        {event.cover_image_url && (
-          <img src={event.cover_image_url} alt="Cover" className="absolute inset-0 w-full h-full object-cover" />
-        )}
-        <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
->>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
         <div className="relative text-center px-6 space-y-6 max-w-3xl">
           <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 px-4 py-2 rounded-full text-white text-xs font-bold uppercase tracking-widest animate-in fade-in slide-in-from-top-4 duration-1000">
             <Sparkles className="h-4 w-4 text-theme/70" />
             Official Invitation
           </div>
-<<<<<<< HEAD
-          
-          <h1 className="text-4xl sm:text-7xl font-bold font-heading text-white tracking-tight animate-in fade-in slide-in-from-bottom-4 duration-1000">
+          <h1 className="text-4xl sm:text-7xl font-bold text-white tracking-tight animate-in fade-in slide-in-from-bottom-4 duration-1000">
             {event.title}
           </h1>
-          
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 text-white/90 font-medium animate-in fade-in duration-1000 delay-300">
             <div className="flex items-center gap-2">
               <Calendar className="h-5 w-5 text-theme/70" />
-              {format(new Date(event.start_date), 'PPP')}
+              {event.date_start || event.start_date
+                ? format(new Date(event.date_start || event.start_date), 'PPP')
+                : 'Date TBD'}
             </div>
-            {hostName && (
-              <div className="flex items-center gap-2">
-                <Heart className="h-5 w-5 text-theme/70" />
-                Hosted by {hostName}
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <Heart className="h-5 w-5 text-theme/70" />
+              Hosted by {hostName}
+            </div>
           </div>
         </div>
 
-        {/* Floating Action Buttons (Mobile Sticky) */}
         <div className="absolute bottom-10 left-0 right-0 px-6 sm:hidden">
-           <div className="flex gap-4">
-              <Link href="#rsvp" className="flex-1">
-                 <Button className="w-full h-14 bg-white text-zinc-900 font-bold rounded-2xl shadow-xl">RSVP Now</Button>
-              </Link>
-              <Link href={`/${params.slug}/shagun`} className="flex-1">
-                 <Button className="w-full h-14 bg-theme text-white font-bold rounded-2xl shadow-xl">Gifting</Button>
-              </Link>
-           </div>
+          <div className="flex gap-4">
+            <Link href="#rsvp" className="flex-1">
+              <Button className="w-full h-14 bg-white text-zinc-900 font-bold rounded-2xl shadow-xl">RSVP Now</Button>
+            </Link>
+            <Link href={`/${params.slug}/shagun`} className="flex-1">
+              <Button className="w-full h-14 bg-theme text-white font-bold rounded-2xl shadow-xl">Gifting</Button>
+            </Link>
+          </div>
         </div>
       </section>
 
-      {/* Main Content Area */}
       <main className="max-w-4xl mx-auto px-6 py-16 space-y-20">
-        
-        {/* About Section */}
         {event.description && (
           <section className="text-center space-y-4">
             <h2 className="text-zinc-400 text-xs font-bold uppercase tracking-widest">A Note from the Family</h2>
@@ -143,43 +105,21 @@ export default async function GuestEventPage({ params }: EventPageProps) {
           </section>
         )}
 
-        {/* Schedule Section */}
-=======
-          <h1 className="text-4xl sm:text-7xl font-bold text-white tracking-tight animate-in fade-in slide-in-from-bottom-4 duration-1000">
-            {event.title}
-          </h1>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 text-white/90 font-medium animate-in fade-in duration-1000 delay-300">
-            <div className="flex items-center gap-2">
-              <Calendar className="h-5 w-5 text-theme/70" />
-              {event.date_start ? format(new Date(event.date_start), 'PPP') : 'Date TBD'}
-            </div>
-            <div className="flex items-center gap-2">
-              <Heart className="h-5 w-5 text-theme/70" />
-              Hosted by {hostName}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <main className="max-w-4xl mx-auto px-6 py-16 space-y-20">
         <section className="text-center space-y-10">
-           <h2 className="text-2xl font-bold text-zinc-900">Are you joining us?</h2>
-           <RSVPForm 
-             eventId={event.id} 
-             eventTitle={event.title} 
-             eventSlug={params.slug} 
-             subEvents={subEvents} 
-           />
+          <h2 className="text-2xl font-bold text-zinc-900">Are you joining us?</h2>
+          <RSVPForm
+            eventId={event.id}
+            eventTitle={event.title}
+            eventSlug={params.slug}
+            subEvents={subEvents}
+          />
         </section>
-
->>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
         <section className="space-y-10">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-zinc-900 flex items-center gap-3">
               <Clock className="w-8 h-8 text-theme" />
               Event Schedule
             </h2>
-<<<<<<< HEAD
             <div className="h-px flex-1 bg-zinc-100 ml-6 hidden sm:block" />
           </div>
 
@@ -189,13 +129,13 @@ export default async function GuestEventPage({ params }: EventPageProps) {
                 <div key={sub.id} className="group flex flex-col sm:flex-row gap-6 p-6 rounded-[32px] border border-zinc-100 bg-white hover:border-orange-100 hover:shadow-xl hover:shadow-orange-50/50 transition-all duration-500">
                   <div className="w-full sm:w-48 h-32 sm:h-auto bg-zinc-50 rounded-2xl flex flex-col items-center justify-center text-center p-4">
                      <span className="text-zinc-400 text-[10px] font-bold uppercase tracking-widest mb-1">
-                       {format(new Date(sub.date_time), 'EEE')}
+                       {format(new Date(sub.date_time || sub.starts_at), 'EEE')}
                      </span>
                      <span className="text-2xl font-bold text-zinc-900">
-                       {format(new Date(sub.date_time), 'do MMM')}
+                       {format(new Date(sub.date_time || sub.starts_at), 'do MMM')}
                      </span>
                      <span className="text-zinc-500 text-xs mt-1">
-                       {format(new Date(sub.date_time), 'p')}
+                       {format(new Date(sub.date_time || sub.starts_at), 'p')}
                      </span>
                   </div>
                   
@@ -214,7 +154,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
                       <div className="flex items-start gap-3">
                         <MapPin className="h-5 w-5 text-zinc-400 shrink-0" />
                         <div>
-                          <p className="text-sm font-bold text-zinc-800">{sub.venue_name}</p>
+                          <p className="text-sm font-bold text-zinc-800">{sub.venue_name || sub.venue_label}</p>
                           <p className="text-xs text-zinc-500">{sub.venue_address || 'Address provided on card'}</p>
                         </div>
                       </div>
@@ -239,7 +179,6 @@ export default async function GuestEventPage({ params }: EventPageProps) {
           </div>
         </section>
 
-        {/* RSVP Section */}
         <section id="rsvp" className="bg-zinc-900 rounded-[40px] p-8 sm:p-16 text-white text-center space-y-10 relative overflow-hidden">
           <div className="absolute top-0 right-0 p-10 opacity-10 blur-xl">
              <Heart className="w-64 h-64 text-orange-500" />
@@ -251,11 +190,10 @@ export default async function GuestEventPage({ params }: EventPageProps) {
           </div>
 
           <div className="max-w-lg mx-auto relative z-10">
-             <RSVPForm eventId={event.id} eventTitle={event.title} />
+            <RSVPForm eventId={event.id} eventTitle={event.title} eventSlug={params.slug} subEvents={subEvents} />
           </div>
         </section>
 
-        {/* Gallery & Memory Book CTA */}
         <section className="grid grid-cols-1 sm:grid-cols-2 gap-6">
            <Link href={`/${params.slug}/gallery`} className="group">
               <div className="bg-zinc-900 rounded-[32px] p-8 text-white space-y-4 hover:bg-black transition-all">
@@ -284,7 +222,6 @@ export default async function GuestEventPage({ params }: EventPageProps) {
            </Link>
         </section>
 
-        {/* Digital Shagun CTA */}
         <section className="bg-orange-50 rounded-[40px] p-8 sm:p-12 border border-orange-100 flex flex-col sm:flex-row items-center gap-8">
            <div className="w-20 h-20 bg-theme rounded-2xl flex items-center justify-center text-white shadow-xl shadow-orange-200">
               <IndianRupee className="w-10 h-10" />
@@ -303,7 +240,6 @@ export default async function GuestEventPage({ params }: EventPageProps) {
 
       </main>
 
-      {/* Sticky Footer CTA */}
       <footer className="py-10 text-center border-t border-zinc-100 bg-zinc-50/50">
         <div className="flex items-center justify-center gap-2 mb-4">
            <div className="w-6 h-6 bg-orange-600 rounded flex items-center justify-center text-white text-[10px] font-bold">U</div>
@@ -311,19 +247,6 @@ export default async function GuestEventPage({ params }: EventPageProps) {
         </div>
         <p className="text-[10px] text-zinc-400 uppercase tracking-widest font-bold">Operating System for India's Events</p>
       </footer>
-=======
-          </div>
-          <div className="grid grid-cols-1 gap-6">
-            {subEvents.map((sub: any) => (
-              <div key={sub.id} className="p-6 rounded-[32px] border border-zinc-100 bg-white hover:border-orange-100 transition-all">
-                <h3 className="text-xl font-bold">{sub.name}</h3>
-                <p className="text-zinc-500">{sub.venue_label} · {sub.starts_at ? format(new Date(sub.starts_at), 'p') : ''}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      </main>
->>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
     </div>
   )
 }

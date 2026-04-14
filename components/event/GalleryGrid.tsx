@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Plus, Image as ImageIcon, Heart, Info, Camera } from 'lucide-react'
-import { supabase } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
+import { guestApiFetch } from '@/lib/api'
 
 const SAMPLE_MODERN_WEDDING = [
   'https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&q=80&w=600',
@@ -17,30 +17,34 @@ const SAMPLE_MODERN_WEDDING = [
 interface MediaItem {
   id: string
   url: string
-  is_official: boolean
+  section?: string
 }
 
-export function GalleryGrid({ eventId }: { eventId: string }) {
+export function GalleryGrid({ eventSlug }: { eventSlug: string }) {
   const [activeTab, setActiveTab] = useState<'official' | 'guests'>('official')
   const [media, setMedia] = useState<MediaItem[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function fetchMedia() {
-      const { data } = await supabase
-        .from('event_media')
-        .select('*')
-        .eq('event_id', eventId)
-        .order('created_at', { ascending: false })
-      setMedia((data as MediaItem[]) || [])
-      setLoading(false)
+      try {
+        const data = await guestApiFetch<{ assets?: MediaItem[] }>(`/v1/public/events/${eventSlug}/gallery`)
+        setMedia(data.assets || [])
+      } catch (err) {
+        console.error('Failed to fetch gallery assets:', err)
+        setMedia([])
+      } finally {
+        setLoading(false)
+      }
     }
     fetchMedia()
-  }, [eventId])
+  }, [eventSlug])
 
   const filteredMedia = activeTab === 'official' 
-    ? (media.filter(m => m.is_official).length > 0 ? media.filter(m => m.is_official) : SAMPLE_MODERN_WEDDING.map(url => ({ url, is_official: true, id: url })))
-    : media.filter(m => !m.is_official)
+    ? (media.filter((m) => (m.section || 'official') === 'official').length > 0
+        ? media.filter((m) => (m.section || 'official') === 'official')
+        : SAMPLE_MODERN_WEDDING.map((url) => ({ url, id: url, section: 'official' })))
+    : media.filter((m) => (m.section || 'guest') !== 'official')
 
   return (
     <div className="space-y-8 animate-in fade-in duration-700">
