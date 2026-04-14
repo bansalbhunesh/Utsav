@@ -49,6 +49,18 @@ export const getGuestToken = (): string | null => {
 // --- Authorized API Fetcher (Host) ---
 type ApiOptions = RequestInit & { json?: Record<string, unknown> | unknown }
 
+export class ApiError extends Error {
+  status: number
+  code?: string
+
+  constructor(message: string, status: number, code?: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+  }
+}
+
 async function performFetch<T>(
   endpoint: string,
   options: ApiOptions,
@@ -72,6 +84,15 @@ async function performFetch<T>(
 
   if (!response.ok) throw response
   return response.json() as Promise<T>
+}
+
+async function parseApiError(response: Response): Promise<ApiError> {
+  const payload = (await response.json().catch(() => ({ error: 'Unknown API error' }))) as {
+    error?: string
+    code?: string
+  }
+  const message = payload.error || `HTTP ${response.status}`
+  return new ApiError(message, response.status, payload.code)
 }
 
 async function refreshAccessToken(): Promise<boolean> {
@@ -101,8 +122,7 @@ export async function apiFetch<T>(
   } catch (rawErr) {
     const response = rawErr as Response
     if (response?.status !== 401) {
-      const error = (await response.json().catch(() => ({ error: 'Unknown API error' }))) as { error?: string }
-      throw new Error(error.error || `HTTP ${response.status}`)
+      throw await parseApiError(response)
     }
 
     const refreshed = await refreshAccessToken()
@@ -115,8 +135,7 @@ export async function apiFetch<T>(
       return await performFetch<T>(endpoint, { ...options }, getAccessToken())
     } catch (retryErr) {
       const retryResponse = retryErr as Response
-      const error = (await retryResponse.json().catch(() => ({ error: 'Unknown API error' }))) as { error?: string }
-      throw new Error(error.error || `HTTP ${retryResponse.status}`)
+      throw await parseApiError(retryResponse)
     }
   }
 }

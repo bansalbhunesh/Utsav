@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useMemo } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -18,6 +18,8 @@ import {
 import Link from 'next/link'
 import { apiFetch } from '@/lib/api'
 import { format } from 'date-fns'
+import { useQuery } from '@tanstack/react-query'
+import { getUserFacingError } from '@/lib/error-messages'
 
 interface DashboardEvent {
   id: string
@@ -28,28 +30,17 @@ interface DashboardEvent {
 }
 
 export default function DashboardPage() {
-  const [events, setEvents] = useState<DashboardEvent[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['dashboard-events'],
+    queryFn: () => apiFetch<{ events: DashboardEvent[] }>('/v1/events'),
+  })
+  const events = useMemo(() => data?.events || [], [data])
+  const errorMessage = useMemo(
+    () => (error ? getUserFacingError(error, 'Failed to load events. Please try again.') : null),
+    [error]
+  )
 
-  const fetchEvents = async () => {
-    try {
-      setLoading(true)
-      const data = await apiFetch<{ events: DashboardEvent[] }>('/v1/events')
-      setEvents(data.events || [])
-    } catch (err: unknown) {
-      console.error('Dashboard fetch failed:', err)
-      setError('Failed to load events. Please ensure the backend is running.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchEvents()
-  }, [])
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
         <Loader2 className="w-10 h-10 animate-spin text-orange-600" />
@@ -77,10 +68,10 @@ export default function DashboardPage() {
         </Link>
       </header>
 
-      {error ? (
+      {errorMessage ? (
         <Card className="p-12 border-none bg-red-50 text-center rounded-[40px] space-y-4">
-           <div className="text-red-600 font-bold uppercase text-xs tracking-widest">{error}</div>
-           <Button variant="outline" onClick={fetchEvents} className="rounded-xl border-red-200 text-red-600">Retry Fetch</Button>
+           <div className="text-red-600 font-bold uppercase text-xs tracking-widest">{errorMessage}</div>
+           <Button variant="outline" onClick={() => void refetch()} className="rounded-xl border-red-200 text-red-600">Retry Fetch</Button>
         </Card>
       ) : events.length === 0 ? (
         <Card className="p-20 text-center rounded-[40px] border-none bg-zinc-50/50 space-y-6">
