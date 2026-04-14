@@ -2,20 +2,9 @@ import { notFound } from 'next/navigation'
 import { ShagunForm } from '@/components/event/ShagunForm'
 import { Heart } from 'lucide-react'
 import { guestApiFetch } from '@/lib/api'
-import { Event } from '@/types'
+import type { PublicEvent, PublicEventResponse } from '@/types/public-event'
 
-interface Profile {
-  full_name: string
-}
-
-interface ShagunEvent extends Event {
-  profiles?: Profile
-  cover_image_url?: string
-  cover_image?: string
-  host_upi_vpa?: string
-}
-
-type ShagunFormEvent = Event & { host_upi_vpa?: string }
+type ShagunEvent = PublicEvent
 
 interface ShagunPageProps {
   params: {
@@ -25,8 +14,8 @@ interface ShagunPageProps {
 
 async function getEventBySlug(slug: string) {
   try {
-    const data = await guestApiFetch<{ event?: ShagunEvent } & ShagunEvent>(`/v1/public/events/${slug}`)
-    return (data?.event ?? data) as ShagunEvent
+    const data = await guestApiFetch<PublicEventResponse>(`/v1/public/events/${slug}`)
+    return data.event
   } catch (err) {
     console.error('Failed to resolve event for shagun:', err)
     return null
@@ -77,7 +66,7 @@ export default async function ShagunPage({ params }: ShagunPageProps) {
           </div>
 
           <ShagunForm
-            event={{ ...event, upi_id: event.upi_id || event.host_upi_vpa } as ShagunFormEvent}
+            event={{ ...event, upi_id: event.upi_id || event.host_upi_vpa }}
             hostName={hostName}
           />
         </div>

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiFetch, getAccessToken } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type SubEvent = { id: string; name: string };
 type Broadcast = {
@@ -57,10 +57,6 @@ export default function EventBroadcastsPage() {
   }, [id]);
 
   useEffect(() => {
-    if (!getAccessToken()) {
-      window.location.href = "/login";
-      return;
-    }
     let active = true;
     void (async () => {
       try {

@@ -1,23 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
-import { apiFetch, getAccessToken } from "@/lib/api";
+import { useParams } from "next/navigation";
+import { useState } from "react";
+import { apiFetch } from "@/lib/api";
 
 export default function CashLoggerPage() {
-  const router = useRouter();
   const { id } = useParams();
   const eventId = String(id || "");
   const [guestPhone, setGuestPhone] = useState("");
   const [amount, setAmount] = useState("5000");
   const [msg, setMsg] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (typeof window !== "undefined" && !getAccessToken()) {
-      router.push("/login");
-    }
-  }, [router]);
 
   async function logCash() {
     setMsg(null);

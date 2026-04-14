@@ -8,13 +8,13 @@ import { Card } from '@/components/ui/card'
 import { paymentService } from '@/lib/services/PaymentService'
 import { Sparkles, Check, Send, Heart, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Event } from '@/types'
 import { Confetti } from '@/components/ui/Confetti'
 import { guestApiFetch } from '@/lib/api'
+import type { PublicEvent } from '@/types/public-event'
 
 
 interface ShagunFormProps {
-  event: Event
+  event: PublicEvent
   hostName: string
 }
 

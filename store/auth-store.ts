@@ -1,10 +1,15 @@
 import { create } from 'zustand'
-import { User } from '@supabase/supabase-js'
+
+export interface AuthUser {
+  id: string
+  phone?: string
+  display_name?: string
+}
 
 interface AuthState {
-  user: User | null
+  user: AuthUser | null
   isLoading: boolean
-  setUser: (user: User | null) => void
+  setUser: (user: AuthUser | null) => void
   setLoading: (isLoading: boolean) => void
 }
 

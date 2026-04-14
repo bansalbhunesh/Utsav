@@ -3,17 +3,8 @@
 import { EventWizard } from "@/components/event/EventWizard";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
-import { useEffect } from "react";
-import { getAccessToken } from "@/lib/api";
 
 export default function NewEventPage() {
-  useEffect(() => {
-    // Auth Guard
-    if (typeof window !== "undefined" && !getAccessToken()) {
-      window.location.href = "/login";
-    }
-  }, []);
-
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50 lg:bg-white pb-20">
       {/* Header */}

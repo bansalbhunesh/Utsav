@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch, getAccessToken } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import {
   buildGuestInviteUrl,
   buildWhatsAppInviteMessage,
@@ -39,10 +39,6 @@ export default function EventDetailPage() {
   }, [id]);
 
   useEffect(() => {
-    if (!getAccessToken()) {
-      window.location.href = "/login";
-      return;
-    }
     void (async () => {
       try {
         const d = await apiFetch<{

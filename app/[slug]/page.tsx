@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { format } from 'date-fns'
 import Image from 'next/image'
 import type { CSSProperties } from 'react'
+import type { PublicEvent, PublicEventResponse, PublicSubEvent } from '@/types/public-event'
 
 interface EventPageProps {
   params: {
@@ -25,35 +26,9 @@ interface EventPageProps {
   }
 }
 
-interface SubEventItem {
-  id: string
-  name: string
-  type?: string
-  sub_type?: string
-  date_time?: string
-  starts_at?: string
-  venue_name?: string
-  venue_label?: string
-  venue_address?: string
-  dress_code?: string
-}
-
-interface EventData {
-  id: string
-  title: string
-  description?: string
-  date_start?: string
-  start_date?: string
-  cover_image_url?: string
-  cover_image?: string
-  branding_color?: string
-  profiles?: { full_name?: string }
-  sub_events?: SubEventItem[]
-}
-
 async function getEventData(slug: string) {
   try {
-    const data = await guestApiFetch<{ event: EventData }>(`/v1/public/events/${slug}`)
+    const data = await guestApiFetch<PublicEventResponse>(`/v1/public/events/${slug}`)
     return data.event
   } catch (err) {
     console.error('Failed to load event data:', err)
@@ -69,7 +44,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
   }
 
   const hostName = event.profiles?.full_name || 'the Hosts'
-  const subEvents = event.sub_events || []
+  const subEvents: PublicSubEvent[] = event.sub_events || []
   const themeColor = event.branding_color || '#EA580C'
 
   return (

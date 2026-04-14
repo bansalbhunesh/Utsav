@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { apiFetch, getAccessToken } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type Row = {
   id: string;
@@ -19,10 +19,6 @@ export default function RSVPsHostPage() {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!getAccessToken()) {
-      window.location.href = "/login";
-      return;
-    }
     void (async () => {
       try {
         const d = await apiFetch<{ rsvps: Row[] }>(`/v1/events/${eventId}/rsvps`);

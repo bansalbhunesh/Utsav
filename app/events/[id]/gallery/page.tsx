@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch, getAccessToken } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type UploadSpec = {
   method: string;
@@ -38,10 +38,6 @@ export default function EventGalleryPage() {
   }, [id, status]);
 
   useEffect(() => {
-    if (!getAccessToken()) {
-      window.location.href = "/login";
-      return;
-    }
     let active = true;
     void (async () => {
       try {

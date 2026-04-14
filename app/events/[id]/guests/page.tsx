@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch, getAccessToken } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type Guest = { id: string; name: string; phone: string };
 
@@ -23,10 +23,6 @@ export default function GuestsPage() {
   }, [eventId]);
 
   useEffect(() => {
-    if (!getAccessToken()) {
-      window.location.href = "/login";
-      return;
-    }
     let active = true;
     void (async () => {
       try {

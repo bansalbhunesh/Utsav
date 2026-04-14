@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { apiFetch, getAccessToken } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type Row = { id: string; channel: string; amount_paise: number | null; blessing_note: string; status: string };
 
@@ -14,10 +14,6 @@ export default function ShagunHostPage() {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!getAccessToken()) {
-      window.location.href = "/login";
-      return;
-    }
     void (async () => {
       try {
         const d = await apiFetch<{ shagun: Row[] }>(`/v1/events/${eventId}/shagun`);

@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import { Heart, Sparkles, Image as ImageIcon, IndianRupee, MessageCircle } from 'lucide-react'
 import { paymentService } from '@/lib/services/PaymentService'
 import { guestApiFetch } from '@/lib/api'
+import type { PublicEvent, PublicEventResponse } from '@/types/public-event'
 
 interface ShagunEntry {
   id: string
@@ -25,19 +26,15 @@ interface MemoryPayload {
   featured_wishes?: ShagunEntry[]
 }
 
-interface PublicEvent {
-  title: string
-}
-
 async function getStats(slug: string) {
   try {
     const [eventData, galleryData, memoryData] = await Promise.all([
-      guestApiFetch<{ event?: PublicEvent } & PublicEvent>(`/v1/public/events/${slug}`),
+      guestApiFetch<PublicEventResponse>(`/v1/public/events/${slug}`),
       guestApiFetch<{ assets?: { id: string }[] }>(`/v1/public/events/${slug}/gallery`),
       guestApiFetch<{ payload?: MemoryPayload }>(`/v1/public/memory/${slug}-memory`).catch(() => null),
     ])
 
-    const event = eventData?.event ?? eventData
+    const event = eventData?.event
     if (!event) return null
 
     const highlights = memoryData?.payload?.highlights || {}

@@ -4,6 +4,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
 // --- Host Auth Management ---
 const tokenKey = "utsav_access_token";
 const refreshKey = "utsav_refresh_token";
+const authCookieKey = "utsav_access_token";
 
 export function getAccessToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -14,12 +15,19 @@ export function setTokens(access: string, refresh?: string) {
   if (typeof window === "undefined") return;
   localStorage.setItem(tokenKey, access);
   if (refresh) localStorage.setItem(refreshKey, refresh);
+  document.cookie = `${authCookieKey}=${encodeURIComponent(access)}; path=/; samesite=lax`;
 }
 
 export function clearTokens() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(tokenKey);
   localStorage.removeItem(refreshKey);
+  document.cookie = `${authCookieKey}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; samesite=lax`;
+}
+
+function getRefreshToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(refreshKey);
 }
 
 // --- Guest Session Management ---
@@ -39,18 +47,20 @@ export const getGuestToken = (): string | null => {
 }
 
 // --- Authorized API Fetcher (Host) ---
-export async function apiFetch<T>(
-  endpoint: string, 
-  options: RequestInit & { json?: Record<string, unknown> | unknown } = {}
+type ApiOptions = RequestInit & { json?: Record<string, unknown> | unknown }
+
+async function performFetch<T>(
+  endpoint: string,
+  options: ApiOptions,
+  token: string | null
 ): Promise<T> {
   const headers = new Headers(options.headers)
-  const token = getAccessToken()
-  
+
   if (token) {
     headers.set('Authorization', `Bearer ${token}`)
   }
 
-  if (options.json) {
+  if (options.json !== undefined) {
     headers.set('Content-Type', 'application/json')
     options.body = JSON.stringify(options.json)
   }
@@ -60,12 +70,55 @@ export async function apiFetch<T>(
     headers,
   })
 
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: 'Unknown API error' }))) as { error?: string }
-    throw new Error(error.error || `HTTP ${response.status}`)
-  }
+  if (!response.ok) throw response
+  return response.json() as Promise<T>
+}
 
-  return response.json()
+async function refreshAccessToken(): Promise<boolean> {
+  const refresh = getRefreshToken()
+  if (!refresh) return false
+  try {
+    const response = await fetch(`${API_BASE_URL}/v1/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refresh }),
+    })
+    if (!response.ok) return false
+    const data = (await response.json()) as { access_token: string; refresh_token?: string }
+    setTokens(data.access_token, data.refresh_token)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export async function apiFetch<T>(
+  endpoint: string,
+  options: ApiOptions = {}
+): Promise<T> {
+  try {
+    return await performFetch<T>(endpoint, { ...options }, getAccessToken())
+  } catch (rawErr) {
+    const response = rawErr as Response
+    if (response?.status !== 401) {
+      const error = (await response.json().catch(() => ({ error: 'Unknown API error' }))) as { error?: string }
+      throw new Error(error.error || `HTTP ${response.status}`)
+    }
+
+    const refreshed = await refreshAccessToken()
+    if (!refreshed) {
+      clearTokens()
+      throw new Error('Session expired. Please log in again.')
+    }
+
+    try {
+      return await performFetch<T>(endpoint, { ...options }, getAccessToken())
+    } catch (retryErr) {
+      const retryResponse = retryErr as Response
+      const error = (await retryResponse.json().catch(() => ({ error: 'Unknown API error' }))) as { error?: string }
+      throw new Error(error.error || `HTTP ${retryResponse.status}`)
+    }
+  }
 }
 
 // --- Guest API Fetcher (RSVP/OTP) ---

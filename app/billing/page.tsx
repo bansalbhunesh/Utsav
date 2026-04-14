@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { apiFetch, getAccessToken } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 type EventRow = { id: string; title: string };
 type Checkout = { id: string; tier: string; status: string; order_id: string; event_id?: string };
@@ -25,10 +25,6 @@ export default function BillingPage() {
   }, [eventId]);
 
   useEffect(() => {
-    if (!getAccessToken()) {
-      window.location.href = "/login";
-      return;
-    }
     let active = true;
     void (async () => {
       try {
