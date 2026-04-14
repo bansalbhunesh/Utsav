@@ -18,7 +18,8 @@ import { Badge } from '@/components/ui/badge'
 import { format } from 'date-fns'
 import Image from 'next/image'
 import type { CSSProperties } from 'react'
-import type { PublicEvent, PublicEventResponse, PublicSubEvent } from '@/types/public-event'
+import type { PublicSubEvent } from '@/types/public-event'
+import { parsePublicEventResponse } from '@/lib/contracts/public'
 
 interface EventPageProps {
   params: {
@@ -28,8 +29,8 @@ interface EventPageProps {
 
 async function getEventData(slug: string) {
   try {
-    const data = await guestApiFetch<PublicEventResponse>(`/v1/public/events/${slug}`)
-    return data.event
+    const data = await guestApiFetch<unknown>(`/v1/public/events/${slug}`)
+    return parsePublicEventResponse(data).event
   } catch (err) {
     console.error('Failed to load event data:', err)
     return null

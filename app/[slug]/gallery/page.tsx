@@ -4,7 +4,7 @@ import { ImageIcon, ChevronLeft } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { guestApiFetch } from '@/lib/api'
-import type { PublicEvent, PublicEventResponse } from '@/types/public-event'
+import { parsePublicEventResponse } from '@/lib/contracts/public'
 
 interface GalleryPageProps {
   params: {
@@ -14,8 +14,8 @@ interface GalleryPageProps {
 
 async function getEventData(slug: string) {
   try {
-    const data = await guestApiFetch<PublicEventResponse>(`/v1/public/events/${slug}`)
-    return data.event
+    const data = await guestApiFetch<unknown>(`/v1/public/events/${slug}`)
+    return parsePublicEventResponse(data).event
   } catch (err) {
     console.error('Failed to load gallery event data:', err)
     return null

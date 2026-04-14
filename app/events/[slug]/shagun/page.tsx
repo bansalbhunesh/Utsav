@@ -2,9 +2,7 @@ import { notFound } from 'next/navigation'
 import { ShagunForm } from '@/components/event/ShagunForm'
 import { Heart } from 'lucide-react'
 import { guestApiFetch } from '@/lib/api'
-import type { PublicEvent, PublicEventResponse } from '@/types/public-event'
-
-type ShagunEvent = PublicEvent
+import { parsePublicEventResponse } from '@/lib/contracts/public'
 
 interface ShagunPageProps {
   params: {
@@ -14,8 +12,8 @@ interface ShagunPageProps {
 
 async function getEventBySlug(slug: string) {
   try {
-    const data = await guestApiFetch<PublicEventResponse>(`/v1/public/events/${slug}`)
-    return data.event
+    const data = await guestApiFetch<unknown>(`/v1/public/events/${slug}`)
+    return parsePublicEventResponse(data).event
   } catch (err) {
     console.error('Failed to resolve event for shagun:', err)
     return null

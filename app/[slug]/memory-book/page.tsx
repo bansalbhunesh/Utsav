@@ -2,15 +2,7 @@ import { notFound } from 'next/navigation'
 import { Heart, Sparkles, Image as ImageIcon, IndianRupee, MessageCircle } from 'lucide-react'
 import { paymentService } from '@/lib/services/PaymentService'
 import { guestApiFetch } from '@/lib/api'
-import type { PublicEvent, PublicEventResponse } from '@/types/public-event'
-
-interface ShagunEntry {
-  id: string
-  blessing_note?: string
-  meta?: {
-    sender_name?: string
-  }
-}
+import { parseMemoryPayloadResponse, parsePublicEventResponse, parsePublicGalleryResponse } from '@/lib/contracts/public'
 
 interface MemoryBookProps {
   params: {
@@ -18,32 +10,26 @@ interface MemoryBookProps {
   }
 }
 
-interface MemoryPayload {
-  highlights?: {
-    shagun_count?: number
-    shagun_total_paise?: number
-  }
-  featured_wishes?: ShagunEntry[]
-}
-
 async function getStats(slug: string) {
   try {
     const [eventData, galleryData, memoryData] = await Promise.all([
-      guestApiFetch<PublicEventResponse>(`/v1/public/events/${slug}`),
-      guestApiFetch<{ assets?: { id: string }[] }>(`/v1/public/events/${slug}/gallery`),
-      guestApiFetch<{ payload?: MemoryPayload }>(`/v1/public/memory/${slug}-memory`).catch(() => null),
+      guestApiFetch<unknown>(`/v1/public/events/${slug}`),
+      guestApiFetch<unknown>(`/v1/public/events/${slug}/gallery`),
+      guestApiFetch<unknown>(`/v1/public/memory/${slug}-memory`).catch(() => null),
     ])
 
-    const event = eventData?.event
+    const event = parsePublicEventResponse(eventData).event
     if (!event) return null
 
-    const highlights = memoryData?.payload?.highlights || {}
+    const gallery = parsePublicGalleryResponse(galleryData)
+    const parsedMemory = memoryData ? parseMemoryPayloadResponse(memoryData) : null
+    const highlights = parsedMemory?.payload?.highlights || {}
     return {
       event,
       totalWishes: Number(highlights.shagun_count || 0),
       totalShagunPaise: Number(highlights.shagun_total_paise || 0),
-      totalPhotos: Number(galleryData.assets?.length || 0),
-      featuredWishes: (memoryData?.payload?.featured_wishes || []) as ShagunEntry[],
+      totalPhotos: Number(gallery.assets?.length || 0),
+      featuredWishes: parsedMemory?.payload?.featured_wishes || [],
     }
   } catch (err) {
     console.error('Failed to load memory book stats:', err)
