@@ -15,6 +15,26 @@ import (
 	"github.com/bhune/utsav/services/api/internal/ratelimit"
 )
 
+type apiErrorDetail struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type apiErrorEnvelope struct {
+	Success bool           `json:"success"`
+	Error   apiErrorDetail `json:"error"`
+}
+
+func writeAPIError(c *gin.Context, status int, code string, message string) {
+	c.JSON(status, apiErrorEnvelope{
+		Success: false,
+		Error: apiErrorDetail{
+			Code:    code,
+			Message: message,
+		},
+	})
+}
+
 type Server struct {
 	Pool         *pgxpool.Pool
 	Config       *config.Config
@@ -42,7 +62,7 @@ func bearerUserID(c *gin.Context, secret []byte) (uuid.UUID, bool) {
 func (s *Server) requireUser(c *gin.Context) (uuid.UUID, bool) {
 	uid, ok := bearerUserID(c, []byte(s.Config.JWTSecret))
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		writeAPIError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Missing or invalid access token.")
 		return uuid.Nil, false
 	}
 	return uid, true
@@ -96,12 +116,12 @@ func (s *Server) requireEventAccess(c *gin.Context) (userID uuid.UUID, eventID u
 	}
 	eventID, err := uuid.Parse(eidStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_event_id"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_EVENT_ID", "Event id is not valid.")
 		return uuid.Nil, uuid.Nil, "", false
 	}
 	role, ok = s.eventRole(c.Request.Context(), userID, eventID)
 	if !ok {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You do not have access to this event.")
 		return uuid.Nil, uuid.Nil, "", false
 	}
 	return userID, eventID, role, true
@@ -110,13 +130,13 @@ func (s *Server) requireEventAccess(c *gin.Context) (userID uuid.UUID, eventID u
 func (s *Server) guestBearer(c *gin.Context) (eventID uuid.UUID, phone string, ok bool) {
 	h := c.GetHeader("Authorization")
 	if !strings.HasPrefix(strings.ToLower(h), "bearer ") {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		writeAPIError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Missing guest access token.")
 		return uuid.Nil, "", false
 	}
 	raw := strings.TrimSpace(h[7:])
 	eid, ph, err := auth.ParseGuestToken(raw, []byte(s.Config.JWTSecret))
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid_guest_token"})
+		writeAPIError(c, http.StatusUnauthorized, "INVALID_GUEST_TOKEN", "Guest session is invalid or expired.")
 		return uuid.Nil, "", false
 	}
 	return eid, ph, true

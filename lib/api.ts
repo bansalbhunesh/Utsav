@@ -88,10 +88,17 @@ async function performFetch<T>(
 
 async function parseApiError(response: Response): Promise<ApiError> {
   const payload = (await response.json().catch(() => ({ error: 'Unknown API error' }))) as {
-    error?: string
+    error?: string | { code?: string; message?: string }
     code?: string
+    message?: string
   }
-  const message = payload.error || `HTTP ${response.status}`
+
+  if (typeof payload.error === 'object' && payload.error) {
+    const message = payload.error.message || `HTTP ${response.status}`
+    return new ApiError(message, response.status, payload.error.code || payload.code)
+  }
+
+  const message = payload.message || payload.error || `HTTP ${response.status}`
   return new ApiError(message, response.status, payload.code)
 }
 
@@ -163,8 +170,7 @@ export async function guestApiFetch<T>(
   })
 
   if (!response.ok) {
-    const error = (await response.json().catch(() => ({ error: 'Unknown API error' }))) as { error?: string }
-    throw new Error(error.error || `HTTP ${response.status}`)
+    throw await parseApiError(response)
   }
 
   return response.json()
