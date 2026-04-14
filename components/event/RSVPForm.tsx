@@ -10,7 +10,6 @@ import {
   Check, 
   X, 
   Users, 
-  Heart, 
   Loader2, 
   Phone, 
   Lock, 
@@ -63,8 +62,8 @@ export function RSVPForm({ eventId, eventTitle, eventSlug, subEvents = [] }: RSV
         json: { phone }
       })
       setStep('VERIFY')
-    } catch (err: any) {
-      setError(err.message || 'Failed to request OTP')
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to request OTP')
     } finally {
       setIsSubmitting(false)
     }
@@ -81,7 +80,7 @@ export function RSVPForm({ eventId, eventTitle, eventSlug, subEvents = [] }: RSV
       )
       setGuestToken(data.guest_access_token)
       setStep('DETAILS')
-    } catch (err: any) {
+    } catch {
       setError('Invalid OTP code. Please try again.')
     } finally {
       setIsSubmitting(false)
@@ -109,8 +108,8 @@ export function RSVPForm({ eventId, eventTitle, eventSlug, subEvents = [] }: RSV
         json: { items }
       })
       setStep('SUCCESS')
-    } catch (err: any) {
-      setError(err.message || 'Failed to submit RSVP')
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to submit RSVP')
     } finally {
       setIsSubmitting(false)
     }

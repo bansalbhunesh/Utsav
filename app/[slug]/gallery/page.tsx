@@ -11,9 +11,14 @@ interface GalleryPageProps {
   }
 }
 
+interface PublicEvent {
+  id: string
+  title: string
+}
+
 async function getEventData(slug: string) {
   try {
-    const data = await guestApiFetch<any>(`/v1/public/events/${slug}`)
+    const data = await guestApiFetch<{ event?: PublicEvent } & PublicEvent>(`/v1/public/events/${slug}`)
     return data?.event ?? data
   } catch (err) {
     console.error('Failed to load gallery event data:', err)

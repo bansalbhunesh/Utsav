@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
     if (!res.ok) throw new Error('API request failed')
     const data = await res.json()
     return NextResponse.json(data)
-  } catch (err: any) {
+  } catch {
     return NextResponse.json({ error: 'Failed to check slug availability' }, { status: 500 })
   }
 }

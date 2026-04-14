@@ -15,6 +15,8 @@ interface ShagunEvent extends Event {
   host_upi_vpa?: string
 }
 
+type ShagunFormEvent = Event & { host_upi_vpa?: string }
+
 interface ShagunPageProps {
   params: {
     slug: string
@@ -68,7 +70,7 @@ export default async function ShagunPage({ params }: ShagunPageProps) {
             </p>
           </div>
           <ShagunForm
-            event={{ ...event, upi_id: event.upi_id || event.host_upi_vpa } as any}
+            event={{ ...event, upi_id: event.upi_id || event.host_upi_vpa } as ShagunFormEvent}
             hostName={hostName}
           />
         </div>

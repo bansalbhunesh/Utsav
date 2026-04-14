@@ -62,7 +62,7 @@ export function ShagunForm({ event, hostName }: ShagunFormProps) {
           json: {
             amount_inr: parseFloat(amount),
             blessing_note: message
-          })
+          }
         })
         setIsSuccess(true)
       } catch (err) {
@@ -119,7 +119,7 @@ export function ShagunForm({ event, hostName }: ShagunFormProps) {
         </div>
         <div className="flex items-start gap-2 text-[10px] text-zinc-500 italic">
           <Info className="h-3 w-3 mt-0.5 shrink-0" />
-          Suggestions based on typical regional norms for {event.type.toLowerCase()} events.
+          Suggestions based on typical regional norms for {(event.event_type || 'event').toLowerCase()} events.
         </div>
       </div>
 

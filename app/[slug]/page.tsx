@@ -16,6 +16,8 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { format } from 'date-fns'
+import Image from 'next/image'
+import type { CSSProperties } from 'react'
 
 interface EventPageProps {
   params: {
@@ -23,9 +25,35 @@ interface EventPageProps {
   }
 }
 
+interface SubEventItem {
+  id: string
+  name: string
+  type?: string
+  sub_type?: string
+  date_time?: string
+  starts_at?: string
+  venue_name?: string
+  venue_label?: string
+  venue_address?: string
+  dress_code?: string
+}
+
+interface EventData {
+  id: string
+  title: string
+  description?: string
+  date_start?: string
+  start_date?: string
+  cover_image_url?: string
+  cover_image?: string
+  branding_color?: string
+  profiles?: { full_name?: string }
+  sub_events?: SubEventItem[]
+}
+
 async function getEventData(slug: string) {
   try {
-    const data = await guestApiFetch<{ event: any }>(`/v1/public/events/${slug}`)
+    const data = await guestApiFetch<{ event: EventData }>(`/v1/public/events/${slug}`)
     return data.event
   } catch (err) {
     console.error('Failed to load event data:', err)
@@ -40,12 +68,12 @@ export default async function GuestEventPage({ params }: EventPageProps) {
     notFound()
   }
 
-  const hostName = (event.profiles as any)?.full_name || 'the Hosts'
+  const hostName = event.profiles?.full_name || 'the Hosts'
   const subEvents = event.sub_events || []
   const themeColor = event.branding_color || '#EA580C'
 
   return (
-    <div className="min-h-screen bg-white" style={{ '--theme-color': themeColor } as any}>
+    <div className="min-h-screen bg-white" style={{ '--theme-color': themeColor } as CSSProperties}>
       <style jsx global>{`
         .bg-theme { background-color: var(--theme-color); }
         .text-theme { color: var(--theme-color); }
@@ -54,10 +82,11 @@ export default async function GuestEventPage({ params }: EventPageProps) {
       `}</style>
       <section className="relative h-[60vh] min-h-[500px] w-full flex items-center justify-center overflow-hidden">
         {(event.cover_image_url || event.cover_image) && (
-          <img
+          <Image
             src={event.cover_image_url || event.cover_image}
             alt="Cover"
-            className="absolute inset-0 w-full h-full object-cover"
+            fill
+            className="absolute inset-0 object-cover"
           />
         )}
         <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
@@ -100,7 +129,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
           <section className="text-center space-y-4">
             <h2 className="text-zinc-400 text-xs font-bold uppercase tracking-widest">A Note from the Family</h2>
             <p className="text-2xl sm:text-3xl text-zinc-900 font-serif leading-relaxed line-clamp-4">
-              "{event.description}"
+              &quot;{event.description}&quot;
             </p>
           </section>
         )}
@@ -125,7 +154,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
 
           <div className="grid grid-cols-1 gap-6">
             {subEvents.length > 0 ? (
-              subEvents.map((sub: any) => (
+              subEvents.map((sub) => (
                 <div key={sub.id} className="group flex flex-col sm:flex-row gap-6 p-6 rounded-[32px] border border-zinc-100 bg-white hover:border-orange-100 hover:shadow-xl hover:shadow-orange-50/50 transition-all duration-500">
                   <div className="w-full sm:w-48 h-32 sm:h-auto bg-zinc-50 rounded-2xl flex flex-col items-center justify-center text-center p-4">
                      <span className="text-zinc-400 text-[10px] font-bold uppercase tracking-widest mb-1">
@@ -245,7 +274,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
            <div className="w-6 h-6 bg-orange-600 rounded flex items-center justify-center text-white text-[10px] font-bold">U</div>
            <p className="text-xs font-bold text-zinc-900 tracking-tighter uppercase">UTSAV PLATFORM</p>
         </div>
-        <p className="text-[10px] text-zinc-400 uppercase tracking-widest font-bold">Operating System for India's Events</p>
+        <p className="text-[10px] text-zinc-400 uppercase tracking-widest font-bold">Operating System for India&apos;s Events</p>
       </footer>
     </div>
   )

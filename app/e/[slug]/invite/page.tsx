@@ -17,11 +17,7 @@ export default function PublicInvitePage() {
   const [ev, setEv] = useState<Record<string, unknown> | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [opened, setOpened] = useState(false);
-  const [origin, setOrigin] = useState("");
-
-  useEffect(() => {
-    setOrigin(typeof window !== "undefined" ? window.location.origin : "");
-  }, []);
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
 
   useEffect(() => {
     void (async () => {

@@ -53,8 +53,8 @@ export default function OrganiserPage() {
       setEvents(e.events || []);
       if (!selectedClientId && c.clients?.length) setSelectedClientId(c.clients[0].id);
       if (!selectedEventId && e.events?.length) setSelectedEventId(e.events[0].id);
-    } catch (err: any) {
-      setErr(err.message || "Failed to load organiser data");
+    } catch (err: unknown) {
+      setErr(err instanceof Error ? err.message : "Failed to load organiser data");
     } finally {
       setIsLoading(false);
     }
@@ -76,7 +76,7 @@ export default function OrganiserPage() {
             json: { company_name: companyName, description },
           });
           await load();
-        } catch (e: any) {
+        } catch {
           setErr("Failed to initialize organiser profile.");
         }
       }
@@ -96,8 +96,8 @@ export default function OrganiserPage() {
       setClientEmail("");
       setClientPhone("");
       await load();
-    } catch (e: any) {
-      setErr(e.message || "Failed to create client");
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Failed to create client");
     } finally {
       setIsSubmitting(false);
     }
@@ -113,8 +113,8 @@ export default function OrganiserPage() {
         json: { event_id: selectedEventId },
       });
       await load();
-    } catch (e: any) {
-      setErr(e.message || "Failed to link event");
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "Failed to link event");
     } finally {
       setIsSubmitting(false);
     }

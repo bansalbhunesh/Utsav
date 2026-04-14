@@ -4,7 +4,6 @@ import { useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { MessageSquare, Share2, Copy, Check, Info } from 'lucide-react'
-import { cn } from '@/lib/utils'
 
 interface BroadcastCenterProps {
   eventTitle: string
@@ -69,7 +68,7 @@ export function BroadcastCenter({ eventTitle, eventSlug }: BroadcastCenterProps)
                </div>
             </div>
             <p className="text-xs text-zinc-600 leading-relaxed italic line-clamp-2">
-               "{tpl.message}"
+               &quot;{tpl.message}&quot;
             </p>
             <Button 
                onClick={() => handleWhatsApp(tpl.message)}

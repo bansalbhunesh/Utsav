@@ -7,7 +7,7 @@ export const signInWithPhone = async (phone: string) => {
       json: { phone },
     })
     return { data, error: null }
-  } catch (error: any) {
+  } catch (error: unknown) {
     return { data: null, error }
   }
 }
@@ -20,7 +20,7 @@ export const verifyOtp = async (phone: string, token: string) => {
     })
     setTokens(data.access_token, data.refresh_token)
     return { data, error: null }
-  } catch (error: any) {
+  } catch (error: unknown) {
     return { data: null, error }
   }
 }

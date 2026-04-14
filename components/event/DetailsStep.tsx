@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { format } from 'date-fns'
-import { CalendarIcon, Loader2 } from 'lucide-react'
+import { CalendarIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -47,8 +47,8 @@ export function DetailsStep() {
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      start_date: eventData.start_date ? new Date(eventData.start_date as string) : undefined as any,
-      end_date: eventData.end_date ? new Date(eventData.end_date as string) : undefined as any,
+      start_date: eventData.start_date ? new Date(eventData.start_date as string) : undefined,
+      end_date: eventData.end_date ? new Date(eventData.end_date as string) : undefined,
       description: eventData.description || '',
       cover_image: eventData.cover_image || '',
       co_owner_name: eventData.co_owner_name || '',

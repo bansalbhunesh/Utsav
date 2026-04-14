@@ -24,7 +24,7 @@ export default function LoginPage() {
         json: { phone } 
       })
       setStep('OTP')
-    } catch (err: any) {
+    } catch {
       setError('Failed to send OTP. Is your phone number correct?')
     } finally {
       setIsLoading(false)
@@ -43,7 +43,7 @@ export default function LoginPage() {
       setTokens(data.access_token, data.refresh_token)
       // Redirect to dashboard
       window.location.href = '/dashboard'
-    } catch (err: any) {
+    } catch {
       setError('Invalid code. Please try again.')
     } finally {
       setIsLoading(false)

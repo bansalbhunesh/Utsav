@@ -42,7 +42,7 @@ export function BasicsStep() {
     resolver: zodResolver(formSchema),
     defaultValues: {
       title: eventData.title || '',
-      event_type: (eventData.event_type as any) || 'WEDDING',
+      event_type: (eventData.event_type as z.infer<typeof formSchema>['event_type']) || 'WEDDING',
       slug: eventData.slug || '',
       upi_id: eventData.upi_id || '',
     },

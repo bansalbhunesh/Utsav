@@ -17,12 +17,24 @@ interface MemoryBookProps {
   }
 }
 
+interface MemoryPayload {
+  highlights?: {
+    shagun_count?: number
+    shagun_total_paise?: number
+  }
+  featured_wishes?: ShagunEntry[]
+}
+
+interface PublicEvent {
+  title: string
+}
+
 async function getStats(slug: string) {
   try {
     const [eventData, galleryData, memoryData] = await Promise.all([
-      guestApiFetch<any>(`/v1/public/events/${slug}`),
+      guestApiFetch<{ event?: PublicEvent } & PublicEvent>(`/v1/public/events/${slug}`),
       guestApiFetch<{ assets?: { id: string }[] }>(`/v1/public/events/${slug}/gallery`),
-      guestApiFetch<any>(`/v1/public/memory/${slug}-memory`).catch(() => null),
+      guestApiFetch<{ payload?: MemoryPayload }>(`/v1/public/memory/${slug}-memory`).catch(() => null),
     ])
 
     const event = eventData?.event ?? eventData

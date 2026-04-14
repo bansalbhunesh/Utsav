@@ -37,7 +37,7 @@ export default function DashboardPage() {
       setLoading(true)
       const data = await apiFetch<{ events: DashboardEvent[] }>('/v1/events')
       setEvents(data.events || [])
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Dashboard fetch failed:', err)
       setError('Failed to load events. Please ensure the backend is running.')
     } finally {

@@ -25,7 +25,7 @@ const themes = [
 export function BrandingStep() {
   const router = useRouter()
   const { user } = useAuthStore()
-  const { eventData, subEvents, setEventData, setCurrentStep, reset } = useEventCreationStore()
+  const { eventData, subEvents, setCurrentStep, reset } = useEventCreationStore()
   const [selectedTheme, setSelectedTheme] = useState(eventData.branding?.theme_name || 'default')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -97,9 +97,9 @@ export function BrandingStep() {
       reset()
       router.push(`/dashboard?success=true&event=${event.slug}`)
 
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Event creation failed', err)
-      setError(err.message || 'An unexpected error occurred.')
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred.')
     } finally {
       setIsSubmitting(false)
     }

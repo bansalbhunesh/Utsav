@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 interface ConfettiPiece {
   id: number
@@ -11,21 +11,15 @@ interface ConfettiPiece {
 }
 
 export function Confetti() {
-  const [pieces, setPieces] = useState<ConfettiPiece[]>([])
-
-  useEffect(() => {
-    // Generate pieces after mount to avoid SSR mismatch with Math.random()
-    const p = Array.from({ length: 50 }).map((_, i) => ({
+  const [pieces] = useState<ConfettiPiece[]>(() =>
+    Array.from({ length: 50 }).map((_, i) => ({
       id: i,
       left: Math.random() * 100,
       delay: Math.random() * 2,
       scale: Math.random() * 0.5 + 0.5,
-      color: ['#F97316', '#EA580C', '#FB923C', '#FDBA74', '#FFF'][Math.floor(Math.random() * 5)]
+      color: ['#F97316', '#EA580C', '#FB923C', '#FDBA74', '#FFF'][Math.floor(Math.random() * 5)],
     }))
-    setPieces(p)
-  }, [])
-
-  if (pieces.length === 0) return null
+  )
 
   return (
     <div className="fixed inset-0 pointer-events-none z-[100] overflow-hidden">

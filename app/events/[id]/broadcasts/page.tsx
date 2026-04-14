@@ -61,7 +61,17 @@ export default function EventBroadcastsPage() {
       window.location.href = "/login";
       return;
     }
-    void load().catch((e) => setErr(String(e)));
+    let active = true;
+    void (async () => {
+      try {
+        await load();
+      } catch (e) {
+        if (active) setErr(String(e));
+      }
+    })();
+    return () => {
+      active = false;
+    };
   }, [load]);
 
   async function createBroadcast() {

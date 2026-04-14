@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
@@ -34,20 +34,20 @@ export function VendorManager({ eventId }: { eventId: string }) {
   const [newCategory, setNewCategory] = useState('')
   const [newBudget, setNewBudget] = useState('')
 
-  const fetchVendors = async () => {
+  const fetchVendors = useCallback(async () => {
     try {
       const data = await apiFetch<{ vendors: Vendor[] }>(`/v1/events/${eventId}/vendors`)
       setVendors(data.vendors || [])
-    } catch (err: any) {
+    } catch {
       setError('Failed to load vendors')
     } finally {
       setLoading(false)
     }
-  }
+  }, [eventId])
 
   useEffect(() => {
-    fetchVendors()
-  }, [eventId])
+    void fetchVendors()
+  }, [fetchVendors])
 
   const handleAdd = async () => {
     if (!newName) return
@@ -67,7 +67,7 @@ export function VendorManager({ eventId }: { eventId: string }) {
       setNewBudget('')
       setIsAdding(false)
       fetchVendors()
-    } catch (err: any) {
+    } catch {
       setError('Failed to add vendor')
     }
   }
@@ -76,7 +76,7 @@ export function VendorManager({ eventId }: { eventId: string }) {
     try {
       await apiFetch(`/v1/events/${eventId}/vendors/${id}`, { method: 'DELETE' })
       fetchVendors()
-    } catch (err: any) {
+    } catch {
       setError('Failed to delete vendor')
     }
   }

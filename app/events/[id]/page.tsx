@@ -29,13 +29,9 @@ export default function EventDetailPage() {
   const [seName, setSeName] = useState("Ceremony");
   const [seType, setSeType] = useState("ceremony");
   const [seStart, setSeStart] = useState("");
-  const [origin, setOrigin] = useState("");
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
   const [copied, setCopied] = useState(false);
   const [shareMeta, setShareMeta] = useState<Record<string, unknown>>({});
-
-  useEffect(() => {
-    setOrigin(typeof window !== "undefined" ? window.location.origin : "");
-  }, []);
 
   const loadSubs = useCallback(async () => {
     const d = await apiFetch<{ sub_events: SubEvent[] }>(`/v1/events/${id}/sub-events`);

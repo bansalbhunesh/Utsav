@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -23,20 +23,37 @@ import { paymentService } from '@/lib/services/PaymentService'
 import { apiFetch } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
+interface EventDetails {
+  id: string
+  slug: string
+  title: string
+}
+
+interface ShagunItem {
+  id: string
+  channel: string
+  amount_paise: number
+  status: string
+  created_at: string
+  meta?: {
+    sender_name?: string
+  }
+}
+
 export default function EventManagePage() {
   const params = useParams()
   const router = useRouter()
   const eventId = params.id as string
   
-  const [event, setEvent] = useState<any>(null)
-  const [shagun, setShagun] = useState<any[]>([])
+  const [event, setEvent] = useState<EventDetails | null>(null)
+  const [shagun, setShagun] = useState<ShagunItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [eventData, shagunData] = await Promise.all([
-        apiFetch<any>(`/v1/events/${eventId}`),
-        apiFetch<{ shagun: any[] }>(`/v1/events/${eventId}/shagun`),
+        apiFetch<EventDetails>(`/v1/events/${eventId}`),
+        apiFetch<{ shagun: ShagunItem[] }>(`/v1/events/${eventId}/shagun`),
       ])
       setEvent(eventData)
       setShagun(shagunData.shagun || [])
@@ -47,11 +64,11 @@ export default function EventManagePage() {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [eventId])
 
   useEffect(() => {
-    fetchData()
-  }, [eventId])
+    void fetchData()
+  }, [fetchData])
 
   const totalShagun = shagun.reduce((acc, curr) => acc + (Number(curr.amount_paise) || 0), 0) / 100
   const digitalCount = shagun.filter(s => s.channel === 'UPI').length

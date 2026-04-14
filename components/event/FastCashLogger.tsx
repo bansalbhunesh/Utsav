@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { 
-  IndianRupee, 
   User, 
   CheckCircle2, 
   Loader2, 
@@ -53,7 +52,7 @@ export function FastCashLogger({ eventId, onSuccess }: FastCashLoggerProps) {
         setName('')
         if (onSuccess) onSuccess()
       }, 3000)
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to log cash shagun', err)
       setError('Failed to log entry. Please try again.')
     } finally {
