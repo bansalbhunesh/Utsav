@@ -27,13 +27,13 @@ export function FastCashLogger({ eventId, onSuccess }: FastCashLoggerProps) {
     setIsSubmitting(true)
     try {
       const { error } = await supabase
-        .from('shagun')
+        .from('shagun_entries')
         .insert({
           event_id: eventId,
-          sender_name: guestName,
-          amount: parseFloat(amount),
-          payment_method: 'CASH',
-          status: 'VERIFIED'
+          channel: 'CASH',
+          amount_paise: Math.round(parseFloat(amount) * 100),
+          status: 'verified',
+          meta: { sender_name: guestName }
         })
 
       if (error) throw error

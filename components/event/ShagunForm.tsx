@@ -56,14 +56,14 @@ export function ShagunForm({ event, hostName }: ShagunFormProps) {
       // 2. Record the transaction in Supabase
       try {
         const { error } = await supabase
-          .from('shagun')
+          .from('shagun_entries')
           .insert({
             event_id: event.id,
-            sender_name: senderName,
-            amount: parseFloat(amount),
-            message: message,
-            payment_method: 'UPI',
-            status: 'GUEST_REPORTED'
+            channel: 'UPI',
+            amount_paise: Math.round(parseFloat(amount) * 100),
+            blessing_note: message,
+            status: 'guest_reported',
+            meta: { sender_name: senderName }
           })
         
         if (error) throw error
@@ -78,7 +78,8 @@ export function ShagunForm({ event, hostName }: ShagunFormProps) {
 
   if (isSuccess) {
     return (
-      <Card className="p-8 text-center space-y-6 rounded-3xl border-orange-100 bg-orange-50/20">
+      <Card className="p-8 text-center space-y-6 rounded-3xl border-orange-100 bg-orange-50/20 relative overflow-hidden">
+        <Confetti />
         <div className="w-20 h-20 bg-orange-600 rounded-full flex items-center justify-center text-white mx-auto shadow-lg shadow-orange-200">
           <Heart className="w-10 h-10 fill-current" />
         </div>

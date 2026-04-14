@@ -9,10 +9,12 @@ import {
   IndianRupee, 
   ChevronRight,
   Sparkles,
-  PartyPopper
+  PartyPopper,
+  Image as ImageIcon
 } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { format } from 'date-fns'
 
 interface EventPageProps {

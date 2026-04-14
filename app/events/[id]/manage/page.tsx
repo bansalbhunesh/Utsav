@@ -39,7 +39,7 @@ export default function EventManagePage() {
       .single()
     
     const { data: shagunData } = await supabase
-      .from('shagun')
+      .from('shagun_entries')
       .select('*')
       .eq('event_id', eventId)
       .order('created_at', { ascending: false })
@@ -53,9 +53,9 @@ export default function EventManagePage() {
     fetchData()
   }, [eventId])
 
-  const totalShagun = shagun.reduce((acc, curr) => acc + Number(curr.amount), 0)
-  const digitalCount = shagun.filter(s => s.payment_method === 'UPI').length
-  const cashCount = shagun.filter(s => s.payment_method === 'CASH').length
+  const totalShagun = shagun.reduce((acc, curr) => acc + (Number(curr.amount_paise) || 0), 0) / 100
+  const digitalCount = shagun.filter(s => s.channel === 'UPI').length
+  const cashCount = shagun.filter(s => s.channel === 'CASH').length
 
   if (isLoading) return <div className="p-10 text-center animate-pulse">Loading event control...</div>
   if (!event) return <div className="p-10 text-center">Event not found.</div>
@@ -158,28 +158,28 @@ export default function EventManagePage() {
                    <p className="text-sm text-zinc-400">No shagun recorded yet.</p>
                 </div>
               ) : (
-                shagun.map((item) => (
-                  <Card key={item.id} className="p-4 rounded-2xl border-none shadow-sm bg-white hover:bg-zinc-50 transition-colors flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className={cn(
-                        "w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg",
-                        item.payment_method === 'UPI' ? "bg-orange-100 text-orange-700" : "bg-green-100 text-green-700"
-                      )}>
-                        {item.sender_name.charAt(0)}
+                  shagun.map((item) => (
+                    <Card key={item.id} className="p-4 rounded-2xl border-none shadow-sm bg-white hover:bg-zinc-50 transition-colors flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className={cn(
+                          "w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg",
+                          item.channel === 'UPI' ? "bg-orange-100 text-orange-700" : "bg-green-100 text-green-700"
+                        )}>
+                          {(item.meta?.sender_name || 'G').charAt(0)}
+                        </div>
+                        <div>
+                          <p className="font-bold text-zinc-900">{item.meta?.sender_name || 'Guest'}</p>
+                          <p className="text-xs text-zinc-500">{item.channel} · {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-bold text-zinc-900">{item.sender_name}</p>
-                        <p className="text-xs text-zinc-500">{item.payment_method} · {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                      <div className="text-right">
+                         <p className="font-bold text-lg text-zinc-900">₹{item.amount_paise / 100}</p>
+                         <Badge variant="outline" className="text-[10px] rounded-md h-5">
+                            {item.status.toLowerCase().replace('_', ' ')}
+                         </Badge>
                       </div>
-                    </div>
-                    <div className="text-right">
-                       <p className="font-bold text-lg text-zinc-900">₹{item.amount}</p>
-                       <Badge variant="outline" className="text-[10px] rounded-md h-5">
-                          {item.status.toLowerCase().replace('_', ' ')}
-                       </Badge>
-                    </div>
-                  </Card>
-                ))
+                    </Card>
+                  ))
               )}
             </div>
           </div>

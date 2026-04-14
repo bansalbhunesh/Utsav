@@ -39,7 +39,7 @@ export function VendorManager({ eventId }: { eventId: string }) {
 
   const fetchVendors = async () => {
     const { data } = await supabase
-      .from('vendors')
+      .from('event_vendors')
       .select('*')
       .eq('event_id', eventId)
       .order('created_at', { ascending: false })
@@ -54,12 +54,12 @@ export function VendorManager({ eventId }: { eventId: string }) {
 
   const handleAdd = async () => {
     if (!newName) return
-    const { error } = await supabase.from('vendors').insert({
+    const { error } = await supabase.from('event_vendors').insert({
       event_id: eventId,
       name: newName,
       category: newCategory,
-      budget_amount: parseFloat(newBudget) || 0,
-      status: 'PENDING'
+      total_paise: (parseFloat(newBudget) || 0) * 100,
+      advance_paise: 0
     })
 
     if (!error) {
@@ -72,14 +72,14 @@ export function VendorManager({ eventId }: { eventId: string }) {
   }
 
   const handleDelete = async (id: string) => {
-    await supabase.from('vendors').delete().eq('id', id)
+    await supabase.from('event_vendors').delete().eq('id', id)
     fetchVendors()
   }
 
   if (loading) return <div className="p-4 text-center animate-pulse">Loading vendors...</div>
 
-  const totalBudget = vendors.reduce((acc, v) => acc + Number(v.budget_amount), 0)
-  const totalPaid = vendors.reduce((acc, v) => acc + Number(v.paid_amount), 0)
+  const totalBudget = vendors.reduce((acc, v: any) => acc + (Number(v.total_paise) || 0), 0) / 100
+  const totalPaid = vendors.reduce((acc, v: any) => acc + (Number(v.advance_paise) || 0), 0) / 100
 
   return (
     <Card className="p-6 border-zinc-200 shadow-xl rounded-[32px] bg-white space-y-6">
@@ -151,10 +151,10 @@ export function VendorManager({ eventId }: { eventId: string }) {
             </div>
             <div className="text-right flex items-center gap-4">
               <div>
-                 <p className="font-bold text-sm text-zinc-900">{paymentService.formatINR(vendor.budget_amount)}</p>
+                 <p className="font-bold text-sm text-zinc-900">{paymentService.formatINR((vendor as any).total_paise / 100)}</p>
                  <div className="flex items-center justify-end gap-1 text-[9px] font-bold text-green-600">
                    <div className="w-1 h-1 bg-green-500 rounded-full" />
-                   PAID {Math.round((vendor.paid_amount/vendor.budget_amount)*100 || 0)}%
+                   PAID {Math.round(((vendor as any).advance_paise / (vendor as any).total_paise) * 100 || 0)}%
                  </div>
               </div>
               <Button variant="ghost" size="icon" onClick={() => handleDelete(vendor.id)} className="h-8 w-8 text-zinc-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">

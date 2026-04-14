@@ -4,10 +4,12 @@ import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useRouter } from 'next/navigation'
 import { signInWithPhone, verifyOtp } from '@/lib/auth'
 import { Loader2, Phone, KeyRound } from 'lucide-react'
 
 export function LoginForm() {
+  const router = useRouter()
   const [phone, setPhone] = useState('')
   const [otp, setOtp] = useState('')
   const [step, setStep] = useState<'phone' | 'otp'>('phone')
@@ -44,7 +46,7 @@ export function LoginForm() {
     if (verifyError) {
       setError(verifyError.message)
     } else {
-      // Success will be handled by the AuthProvider listener
+      router.push('/dashboard')
     }
   }
 

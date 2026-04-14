@@ -20,12 +20,16 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function fetchEvents() {
+      if (!user && !isLoading) {
+        window.location.href = '/login'
+        return
+      }
       if (!user) return
       
       const { data, error } = await supabase
         .from('events')
         .select('*')
-        .eq('owner_id', user.id)
+        .eq('owner_user_id', user.id)
         .order('created_at', { ascending: false })
 
       if (error) {
@@ -99,12 +103,12 @@ export default function DashboardPage() {
             {events.map((event) => (
               <div key={event.id} className="group bg-white rounded-3xl border border-zinc-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden">
                 <div className="h-32 bg-zinc-100 relative overflow-hidden">
-                   {event.cover_image && (
-                     <img src={event.cover_image} alt="" className="w-full h-full object-cover" />
+                   {event.cover_image_url && (
+                     <img src={event.cover_image_url} alt="" className="w-full h-full object-cover" />
                    )}
                    <div className="absolute top-4 right-4">
                       <Badge className="bg-white/90 backdrop-blur-sm text-zinc-900 font-bold border-none">
-                         {event.type}
+                         {event.event_type}
                       </Badge>
                    </div>
                 </div>

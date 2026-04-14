@@ -48,7 +48,7 @@ export function BrandingStep() {
         .insert({
           ...eventData,
           upi_id: eventData.upi_id,
-          owner_id: user.id,
+          owner_user_id: user.id,
           branding_color: finalBranding?.primary,
           branding: {
             theme_name: selectedTheme,

@@ -1,6 +1,7 @@
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
-import { MoveRight } from "lucide-react";
+import { MoveRight, Sparkles, PartyPopper } from "lucide-react";
+import Link from "next/link";
 
 export default function Home() {
   return (

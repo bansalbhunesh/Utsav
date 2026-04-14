@@ -18,12 +18,13 @@ interface RSVPFormProps {
 export function RSVPForm({ eventId, eventTitle }: RSVPFormProps) {
   const [status, setStatus] = useState<'CONFIRMED' | 'DECLINED' | null>(null)
   const [name, setName] = useState('')
+  const [phone, setPhone] = useState('')
   const [guestCount, setGuestCount] = useState(1)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSuccess, setIsSuccess] = useState(false)
 
   const handleSubmit = async () => {
-    if (!name || !status) return
+    if (!name || !phone || !status) return
 
     setIsSubmitting(true)
     try {
@@ -32,16 +33,15 @@ export function RSVPForm({ eventId, eventTitle }: RSVPFormProps) {
         .insert({
           event_id: eventId,
           name: name,
-          status: status,
-          notes: status === 'CONFIRMED' ? `Bringing ${guestCount} guests` : '',
-          // Simplified family RSVP: we store count in notes or can expand schema
+          phone: phone,
+          // Correcting name to match schema if needed, but the audit says we are missing phone
         })
 
       if (error) throw error
       setIsSuccess(true)
     } catch (err) {
       console.error('RSVP failed', err)
-      alert('Error saving RSVP.')
+      alert('Error saving RSVP. Please try again.')
     } finally {
       setIsSubmitting(false)
     }
@@ -49,7 +49,8 @@ export function RSVPForm({ eventId, eventTitle }: RSVPFormProps) {
 
   if (isSuccess) {
     return (
-      <Card className="p-8 text-center space-y-4 rounded-3xl border-green-100 bg-green-50/20">
+      <Card className="p-8 text-center space-y-4 rounded-3xl border-green-100 bg-green-50/20 relative overflow-hidden">
+        <Confetti />
         <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center text-white mx-auto">
           <Check className="w-8 h-8" />
         </div>
@@ -110,6 +111,16 @@ export function RSVPForm({ eventId, eventTitle }: RSVPFormProps) {
             placeholder="e.g. Rahul Sharma" 
             value={name}
             onChange={(e) => setName(e.target.value)}
+            className="h-12 rounded-xl"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-zinc-500 uppercase tracking-wider ml-1">Phone Number</label>
+          <Input 
+            placeholder="e.g. +91 9876543210" 
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
             className="h-12 rounded-xl"
           />
         </div>
