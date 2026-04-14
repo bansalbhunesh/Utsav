@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -27,11 +28,20 @@ func Logger() gin.HandlerFunc {
 		start := time.Now()
 		c.Next()
 		elapsed := time.Since(start)
-		// structured-friendly single line
-		gin.DefaultWriter.Write([]byte(
-			time.Now().Format(time.RFC3339) + " " + c.Request.Method + " " + c.Request.URL.Path +
-				" " + http.StatusText(c.Writer.Status()) + " " + elapsed.String() + " rid=" + c.GetString("request_id") + "\n",
-		))
+		payload := map[string]any{
+			"ts":          time.Now().UTC().Format(time.RFC3339),
+			"level":       "info",
+			"request_id":  c.GetString("request_id"),
+			"method":      c.Request.Method,
+			"path":        c.Request.URL.Path,
+			"status_code": c.Writer.Status(),
+			"status_text": http.StatusText(c.Writer.Status()),
+			"latency_ms":  elapsed.Milliseconds(),
+			"client_ip":   c.ClientIP(),
+			"user_agent":  c.Request.UserAgent(),
+		}
+		b, _ := json.Marshal(payload)
+		gin.DefaultWriter.Write(append(b, '\n'))
 	}
 }
 
@@ -63,6 +73,17 @@ func RecoverJSON() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if rec := recover(); rec != nil {
+				payload := map[string]any{
+					"ts":         time.Now().UTC().Format(time.RFC3339),
+					"level":      "error",
+					"request_id": c.GetString("request_id"),
+					"path":       c.Request.URL.Path,
+					"method":     c.Request.Method,
+					"panic":      rec,
+				}
+				if b, err := json.Marshal(payload); err == nil {
+					gin.DefaultWriter.Write(append(b, '\n'))
+				}
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
 			}
 		}()

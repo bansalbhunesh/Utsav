@@ -10,8 +10,13 @@ type Config struct {
 	HTTPPort                 string
 	DatabaseURL              string
 	MigrationsPath           string
+	Env                      string
 	JWTSecret                string
 	DevOTPCode               string
+	OTPProvider              string
+	OTPAPIKey                string
+	OTPAPISecret             string
+	OTPSenderID              string
 	CORSOrigins              []string
 	RunMigrations            bool
 	ObjectStorePublicBaseURL string
@@ -19,6 +24,16 @@ type Config struct {
 	ObjectStoreRegion        string
 	RazorpayKeyID            string
 	RazorpayWebhookSecret    string
+	RedisURL                 string
+	UpstashRESTURL           string
+	UpstashRESTToken         string
+	AuthOTPRequestLimit      int
+	AuthOTPVerifyLimit       int
+	RSVPOTPRequestLimit      int
+	RSVPOTPVerifyLimit       int
+	RateLimitWindowSec       int
+	LogLevel                 string
+	SentryDSN                string
 }
 
 func Load() (*Config, error) {
@@ -38,8 +53,13 @@ func Load() (*Config, error) {
 		HTTPPort:                 port,
 		DatabaseURL:              dsn,
 		MigrationsPath:           migrations,
+		Env:                      getenv("ENV", "development"),
 		JWTSecret:                secret,
 		DevOTPCode:               getenv("DEV_OTP_CODE", "123456"),
+		OTPProvider:              getenv("OTP_PROVIDER", ""),
+		OTPAPIKey:                getenv("OTP_API_KEY", ""),
+		OTPAPISecret:             getenv("OTP_API_SECRET", ""),
+		OTPSenderID:              getenv("OTP_SENDER_ID", ""),
 		CORSOrigins:              []string{cors},
 		RunMigrations:            runMig,
 		ObjectStorePublicBaseURL: getenv("OBJECT_STORE_PUBLIC_BASE_URL", "http://127.0.0.1:9000/utsav"),
@@ -47,6 +67,16 @@ func Load() (*Config, error) {
 		ObjectStoreRegion:        getenv("OBJECT_STORE_REGION", "auto"),
 		RazorpayKeyID:            getenv("RAZORPAY_KEY_ID", "rzp_test_stub"),
 		RazorpayWebhookSecret:    getenv("RAZORPAY_WEBHOOK_SECRET", "rzp_webhook_secret_stub"),
+		RedisURL:                 getenv("REDIS_URL", ""),
+		UpstashRESTURL:           getenv("UPSTASH_REDIS_REST_URL", ""),
+		UpstashRESTToken:         getenv("UPSTASH_REDIS_REST_TOKEN", ""),
+		AuthOTPRequestLimit:      mustAtoi(getenv("AUTH_OTP_REQUEST_LIMIT", "5"), 5),
+		AuthOTPVerifyLimit:       mustAtoi(getenv("AUTH_OTP_VERIFY_LIMIT", "10"), 10),
+		RSVPOTPRequestLimit:      mustAtoi(getenv("RSVP_OTP_REQUEST_LIMIT", "10"), 10),
+		RSVPOTPVerifyLimit:       mustAtoi(getenv("RSVP_OTP_VERIFY_LIMIT", "20"), 20),
+		RateLimitWindowSec:       mustAtoi(getenv("RATE_LIMIT_WINDOW", "900"), 900),
+		LogLevel:                 getenv("LOG_LEVEL", "info"),
+		SentryDSN:                getenv("SENTRY_DSN", ""),
 	}, nil
 }
 
@@ -62,6 +92,14 @@ func MustPort(s string) int {
 	n, err := strconv.Atoi(s)
 	if err != nil {
 		panic(fmt.Errorf("invalid port: %w", err))
+	}
+	return n
+}
+
+func mustAtoi(v string, def int) int {
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
 	}
 	return n
 }

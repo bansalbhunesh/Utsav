@@ -31,10 +31,6 @@ func (s *Server) getPublicUPILink(c *gin.Context) {
 }
 
 func (s *Server) postPublicShagunReport(c *gin.Context) {
-	eidSlug, ok := s.eventIDFromSlug(c)
-	if !ok {
-		return
-	}
 	geid, phone, ok := s.guestBearer(c)
 	if !ok {
 		return
@@ -51,7 +47,7 @@ func (s *Server) postPublicShagunReport(c *gin.Context) {
 	if svcErr := s.PublicService.ReportShagun(
 		c.Request.Context(),
 		c.Param("slug"),
-		eidSlug,
+		geid,
 		phone,
 		body.AmountINR,
 		body.BlessingNote,

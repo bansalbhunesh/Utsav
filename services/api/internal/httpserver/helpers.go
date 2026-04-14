@@ -12,7 +12,6 @@ import (
 	"github.com/bhune/utsav/services/api/internal/auth"
 	"github.com/bhune/utsav/services/api/internal/config"
 	"github.com/bhune/utsav/services/api/internal/media"
-	"github.com/bhune/utsav/services/api/internal/ratelimit"
 	authservice "github.com/bhune/utsav/services/api/internal/service/auth"
 	billingservice "github.com/bhune/utsav/services/api/internal/service/billing"
 	broadcastservice "github.com/bhune/utsav/services/api/internal/service/broadcast"
@@ -50,8 +49,6 @@ func writeAPIError(c *gin.Context, status int, code string, message string) {
 type Server struct {
 	Pool         *pgxpool.Pool
 	Config       *config.Config
-	AuthOTPLimit *ratelimit.Window
-	RSVPOTPLimit *ratelimit.Window
 	MediaSigner  media.Signer
 	AuthService  *authservice.Service
 	BillingService *billingservice.Service

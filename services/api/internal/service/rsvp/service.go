@@ -2,6 +2,8 @@ package rsvpservice
 
 import (
 	"context"
+	"crypto/rand"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/bhune/utsav/services/api/internal/auth"
+	"github.com/bhune/utsav/services/api/internal/otp"
 	"github.com/bhune/utsav/services/api/internal/ratelimit"
 	"github.com/bhune/utsav/services/api/internal/repository/rsvprepo"
 )
@@ -33,19 +36,45 @@ type SubmitItemInput struct {
 }
 
 type Service struct {
-	repo      rsvprepo.Repository
-	otpWindow *ratelimit.Window
-	devOTP    string
-	jwtSecret []byte
+	repo              rsvprepo.Repository
+	otpRequestLimiter ratelimit.Limiter
+	otpVerifyLimiter  ratelimit.Limiter
+	devOTP            string
+	jwtSecret         []byte
+	env               string
+	otpSender         otp.Sender
 }
 
-func NewService(repo rsvprepo.Repository, otpWindow *ratelimit.Window, devOTPCode, jwtSecret string) *Service {
+func NewService(
+	repo rsvprepo.Repository,
+	otpRequestLimiter ratelimit.Limiter,
+	otpVerifyLimiter ratelimit.Limiter,
+	devOTPCode string,
+	jwtSecret string,
+	env string,
+	otpSender otp.Sender,
+) *Service {
 	return &Service{
-		repo:      repo,
-		otpWindow: otpWindow,
-		devOTP:    devOTPCode,
-		jwtSecret: []byte(jwtSecret),
+		repo:              repo,
+		otpRequestLimiter: otpRequestLimiter,
+		otpVerifyLimiter:  otpVerifyLimiter,
+		devOTP:            strings.TrimSpace(devOTPCode),
+		jwtSecret:         []byte(jwtSecret),
+		env:               strings.TrimSpace(strings.ToLower(env)),
+		otpSender:         otpSender,
 	}
+}
+
+func generateNumericOTP() (string, error) {
+	raw := make([]byte, 4)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	n := int(raw[0])<<24 | int(raw[1])<<16 | int(raw[2])<<8 | int(raw[3])
+	if n < 0 {
+		n = -n
+	}
+	return fmt.Sprintf("%06d", n%1000000), nil
 }
 
 func (s *Service) EventIDFromSlug(ctx context.Context, slug string) (uuid.UUID, *ServiceError) {
@@ -64,10 +93,27 @@ func (s *Service) RequestOTP(ctx context.Context, eventID uuid.UUID, slug, phone
 	if phone == "" {
 		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone is required."}
 	}
-	if s.otpWindow != nil && !s.otpWindow.Allow("rsvp_otp:"+clientIP+"|"+strings.TrimSpace(strings.ToLower(slug))+"|"+phone) {
-		return &ServiceError{Status: http.StatusTooManyRequests, Code: "RATE_LIMITED", Message: "Too many RSVP OTP requests. Please retry later."}
+	if s.otpRequestLimiter != nil {
+		allowed, err := s.otpRequestLimiter.Allow(ctx, "rsvp_otp_req:"+clientIP+"|"+strings.TrimSpace(strings.ToLower(slug))+"|"+phone)
+		if err != nil {
+			return &ServiceError{Status: http.StatusInternalServerError, Code: "RATE_LIMIT_FAILED", Message: "Unable to validate RSVP OTP rate limits."}
+		}
+		if !allowed {
+			return &ServiceError{Status: http.StatusTooManyRequests, Code: "RATE_LIMITED", Message: "Too many RSVP OTP requests. Please retry later."}
+		}
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(s.devOTP), bcrypt.DefaultCost)
+	if s.env == "production" && s.devOTP != "" {
+		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_CONFIG_INVALID", Message: "DEV_OTP_CODE must be disabled in production."}
+	}
+	code := s.devOTP
+	if code == "" {
+		var err error
+		code, err = generateNumericOTP()
+		if err != nil {
+			return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_GENERATE_FAILED", Message: "Unable to generate RSVP OTP."}
+		}
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(code), bcrypt.DefaultCost)
 	if err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_HASH_FAILED", Message: "Unable to process RSVP OTP request."}
 	}
@@ -77,12 +123,26 @@ func (s *Service) RequestOTP(ctx context.Context, eventID uuid.UUID, slug, phone
 	if err := s.repo.InsertRSVPOTPChallenge(ctx, eventID, phone, string(hash)); err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_PERSIST_FAILED", Message: "Unable to save RSVP OTP challenge."}
 	}
+	if s.otpSender != nil {
+		if err := s.otpSender.SendOTP(ctx, phone, code); err != nil {
+			return &ServiceError{Status: http.StatusBadGateway, Code: "OTP_SEND_FAILED", Message: "Unable to send RSVP OTP."}
+		}
+	}
 	return nil
 }
 
 func (s *Service) VerifyOTP(ctx context.Context, eventID uuid.UUID, phone, code string) (string, *ServiceError) {
 	if phone == "" || code == "" {
 		return "", &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone and code are required."}
+	}
+	if s.otpVerifyLimiter != nil {
+		allowed, err := s.otpVerifyLimiter.Allow(ctx, "rsvp_otp_verify:"+eventID.String()+"|"+phone)
+		if err != nil {
+			return "", &ServiceError{Status: http.StatusInternalServerError, Code: "RATE_LIMIT_FAILED", Message: "Unable to validate RSVP OTP rate limits."}
+		}
+		if !allowed {
+			return "", &ServiceError{Status: http.StatusTooManyRequests, Code: "RATE_LIMITED", Message: "Too many RSVP OTP verify attempts. Please retry later."}
+		}
 	}
 	ch, err := s.repo.GetLatestRSVPOTPChallenge(ctx, eventID, phone)
 	if err != nil {

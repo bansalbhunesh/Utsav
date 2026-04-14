@@ -3,6 +3,7 @@ package httpserver
 import "github.com/gin-gonic/gin"
 
 func (s *Server) Mount(r *gin.Engine) {
+	r.GET("/health", s.healthz)
 	v1 := r.Group("/v1")
 	v1.GET("/healthz", s.healthz)
 	v1.GET("/readyz", s.readyz)

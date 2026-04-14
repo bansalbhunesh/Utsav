@@ -4,8 +4,11 @@ import (
 	"context"
 	"log"
 	"os"
+	"strings"
 	"time"
 
+	sentry "github.com/getsentry/sentry-go"
+	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
 
 	"github.com/bhune/utsav/services/api/internal/config"
@@ -14,6 +17,7 @@ import (
 	"github.com/bhune/utsav/services/api/internal/media"
 	"github.com/bhune/utsav/services/api/internal/middleware"
 	"github.com/bhune/utsav/services/api/internal/migrate"
+	"github.com/bhune/utsav/services/api/internal/otp"
 	"github.com/bhune/utsav/services/api/internal/ratelimit"
 	"github.com/bhune/utsav/services/api/internal/repository/authrepo"
 	"github.com/bhune/utsav/services/api/internal/repository/billingrepo"
@@ -63,20 +67,44 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
+	if strings.TrimSpace(cfg.SentryDSN) != "" {
+		if err := sentry.Init(sentry.ClientOptions{
+			Dsn:              cfg.SentryDSN,
+			Environment:      cfg.Env,
+			EnableTracing:    false,
+			AttachStacktrace: true,
+		}); err != nil {
+			log.Printf("sentry init failed: %v", err)
+		} else {
+			r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
+		}
+	}
 	r.Use(middleware.RecoverJSON(), middleware.RequestID(), middleware.Logger(), middleware.CORS(cfg.CORSOrigins))
 
 	srv := &httpserver.Server{
 		Pool:         pool,
 		Config:       cfg,
-		AuthOTPLimit: ratelimit.New(5, 15*time.Minute),
-		RSVPOTPLimit: ratelimit.New(10, 15*time.Minute),
 		MediaSigner:  media.URLSigner{BaseURL: cfg.ObjectStorePublicBaseURL},
+	}
+	window := time.Duration(cfg.RateLimitWindowSec) * time.Second
+	newLimiter := func(max int) ratelimit.Limiter {
+		if strings.TrimSpace(cfg.UpstashRESTURL) != "" && strings.TrimSpace(cfg.UpstashRESTToken) != "" {
+			return ratelimit.NewUpstashRESTLimiter(cfg.UpstashRESTURL, cfg.UpstashRESTToken, max, window)
+		}
+		return ratelimit.NewInMemoryLimiter(max, window)
+	}
+	var otpSender otp.Sender
+	if strings.EqualFold(strings.TrimSpace(cfg.OTPProvider), "msg91") {
+		otpSender = otp.NewMSG91Sender(cfg.OTPAPIKey, cfg.OTPSenderID, "")
 	}
 	srv.AuthService = authservice.NewService(
 		authrepo.NewPGRepository(pool),
-		srv.AuthOTPLimit,
+		newLimiter(cfg.AuthOTPRequestLimit),
+		newLimiter(cfg.AuthOTPVerifyLimit),
 		cfg.DevOTPCode,
 		cfg.JWTSecret,
+		cfg.Env,
+		otpSender,
 	)
 	srv.BillingService = billingservice.NewService(billingrepo.NewPGRepository(pool))
 	srv.BroadcastService = broadcastservice.NewService(broadcastrepo.NewPGRepository(pool))
@@ -87,9 +115,12 @@ func main() {
 	srv.PublicService = publicservice.NewService(publicrepo.NewPGRepository(pool), srv.MediaSigner)
 	srv.RSVPService = rsvpservice.NewService(
 		rsvprepo.NewPGRepository(pool),
-		srv.RSVPOTPLimit,
+		newLimiter(cfg.RSVPOTPRequestLimit),
+		newLimiter(cfg.RSVPOTPVerifyLimit),
 		cfg.DevOTPCode,
 		cfg.JWTSecret,
+		cfg.Env,
+		otpSender,
 	)
 	srv.GuestService = guestservice.NewService(guestrepo.NewPGRepository(pool))
 	srv.ShagunService = shagunservice.NewService(shagunrepo.NewPGRepository(pool))

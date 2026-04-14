@@ -1,0 +1,45 @@
+services:
+  - type: web
+    name: utsav-api
+    runtime: go
+    rootDir: services/api
+    buildCommand: go build -o bin/api ./cmd/server
+    startCommand: ./bin/api
+    healthCheckPath: /v1/healthz
+    autoDeploy: true
+    envVars:
+      - key: HTTP_PORT
+        value: "8080"
+      - key: ENV
+        value: production
+      - key: RUN_MIGRATIONS
+        value: "true"
+      - key: MIGRATIONS_PATH
+        value: ../../db/migrations
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: OTP_PROVIDER
+        value: msg91
+      - key: OTP_API_KEY
+        sync: false
+      - key: OTP_SENDER_ID
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: OBJECT_STORE_PUBLIC_BASE_URL
+        sync: false
+      - key: OBJECT_STORE_BUCKET
+        sync: false
+      - key: OBJECT_STORE_REGION
+        value: auto
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+
