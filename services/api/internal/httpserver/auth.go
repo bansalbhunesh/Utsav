@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,7 +30,11 @@ func (s *Server) postOTPRequest(c *gin.Context) {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "dev_hint": "use configured DEV_OTP_CODE in non-production docs"})
+	resp := gin.H{"ok": true}
+	if s.Config != nil && strings.ToLower(strings.TrimSpace(s.Config.Env)) != "production" {
+		resp["dev_hint"] = "use configured DEV_OTP_CODE in non-production docs"
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func (s *Server) postOTPVerify(c *gin.Context) {
@@ -38,7 +43,7 @@ func (s *Server) postOTPVerify(c *gin.Context) {
 		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Phone and code are required.")
 		return
 	}
-	result, svcErr := s.AuthService.VerifyOTP(c.Request.Context(), body.Phone, body.Code)
+	result, svcErr := s.AuthService.VerifyOTP(c.Request.Context(), body.Phone, body.Code, c.ClientIP())
 	if svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return

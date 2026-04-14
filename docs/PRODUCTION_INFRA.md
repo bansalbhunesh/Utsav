@@ -45,10 +45,8 @@ File reference: `.env.example`
 NEXT_PUBLIC_API_URL=https://api.yourdomain.com
 ```
 
-Optional (if frontend Sentry is enabled later):
-
 ```bash
-NEXT_PUBLIC_SENTRY_DSN=
+NEXT_PUBLIC_SENTRY_DSN=https://<frontend-public-dsn>
 ```
 
 ## Backend (Render / Fly)
@@ -71,6 +69,7 @@ ENV=production
 
 ```bash
 DEV_OTP_CODE=
+OTP_MAX_ATTEMPTS=5
 OBJECT_STORE_PUBLIC_BASE_URL=https://cdn.yourdomain.com
 OBJECT_STORE_BUCKET=utsav-prod
 OBJECT_STORE_REGION=auto
@@ -79,15 +78,20 @@ RAZORPAY_WEBHOOK_SECRET=
 LOG_LEVEL=info
 ```
 
-### Observability and reliability (planned integration)
+### Observability and reliability
 
 ```bash
-SENTRY_DSN=
-BETTERSTACK_HEARTBEAT_URL=
+SENTRY_DSN=https://<backend-dsn>
+BETTERSTACK_HEARTBEAT_URL=https://uptime.betterstack.com/api/v1/heartbeat/...
 LOGTAIL_SOURCE_TOKEN=
-REDIS_URL=
-RATE_LIMIT_WINDOW=60
-RATE_LIMIT_MAX_REQUESTS=100
+UPSTASH_REDIS_REST_URL=https://<upstash-endpoint>
+UPSTASH_REDIS_REST_TOKEN=<upstash-token>
+RATE_LIMIT_WINDOW=900
+AUTH_OTP_REQUEST_LIMIT=5
+AUTH_OTP_VERIFY_LIMIT=10
+RSVP_OTP_REQUEST_LIMIT=10
+RSVP_OTP_VERIFY_LIMIT=20
+PUBLIC_RSVP_SUBMIT_LIMIT=30
 ```
 
 ---
@@ -216,7 +220,7 @@ Success criteria:
 
 ---
 
-## 7) Infra status and remaining gaps
+## 7) Infra status and closure
 
 Implemented in this repository:
 
@@ -234,11 +238,13 @@ Implemented in this repository:
 4. **Deployment manifests**
    - `render.yaml`, `fly.toml`, `services/api/Dockerfile`, `vercel.json` added.
 
-Remaining recommended hardening:
+Closed in-repo:
 
-- Add frontend Sentry SDK setup (Next.js build-time instrumentation).
-- Send logs to managed sink (Logtail/Datadog) instead of stdout-only.
-- Add IaC (Terraform) if multi-environment replication is required.
+- Frontend Sentry is wired via `@sentry/nextjs`, startup instrumentation, and `app/error.tsx` capture.
+- Backend structured JSON logs include `request_id`, `user_id`, `guest_id`, endpoint path, and error code context.
+- OTP expiration is 5 minutes with persisted attempt lockout (`OTP_MAX_ATTEMPTS`) and production guard for `DEV_OTP_CODE`.
+- Distributed rate limiting is enforced via Upstash for auth OTP request/verify, RSVP OTP request/verify, and public RSVP submit.
+- Deployment manifests include health checks, baseline horizontal scale, and required env injection.
 
 ---
 

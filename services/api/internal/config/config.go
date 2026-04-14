@@ -31,9 +31,13 @@ type Config struct {
 	AuthOTPVerifyLimit       int
 	RSVPOTPRequestLimit      int
 	RSVPOTPVerifyLimit       int
+	PublicRSVPSubmitLimit    int
 	RateLimitWindowSec       int
+	OTPMaxAttempts           int
 	LogLevel                 string
 	SentryDSN                string
+	BetterstackHeartbeatURL  string
+	FrontendSentryDSN        string
 }
 
 func Load() (*Config, error) {
@@ -74,9 +78,13 @@ func Load() (*Config, error) {
 		AuthOTPVerifyLimit:       mustAtoi(getenv("AUTH_OTP_VERIFY_LIMIT", "10"), 10),
 		RSVPOTPRequestLimit:      mustAtoi(getenv("RSVP_OTP_REQUEST_LIMIT", "10"), 10),
 		RSVPOTPVerifyLimit:       mustAtoi(getenv("RSVP_OTP_VERIFY_LIMIT", "20"), 20),
+		PublicRSVPSubmitLimit:    mustAtoi(getenv("PUBLIC_RSVP_SUBMIT_LIMIT", "30"), 30),
 		RateLimitWindowSec:       mustAtoi(getenv("RATE_LIMIT_WINDOW", "900"), 900),
+		OTPMaxAttempts:           mustAtoi(getenv("OTP_MAX_ATTEMPTS", "5"), 5),
 		LogLevel:                 getenv("LOG_LEVEL", "info"),
 		SentryDSN:                getenv("SENTRY_DSN", ""),
+		BetterstackHeartbeatURL:  getenv("BETTERSTACK_HEARTBEAT_URL", ""),
+		FrontendSentryDSN:        getenv("NEXT_PUBLIC_SENTRY_DSN", ""),
 	}, nil
 }
 

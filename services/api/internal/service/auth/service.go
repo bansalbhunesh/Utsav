@@ -54,6 +54,7 @@ type Service struct {
 	jwtSecret         []byte
 	env               string
 	otpSender         otp.Sender
+	otpMaxAttempts    int
 }
 
 func NewService(
@@ -64,6 +65,7 @@ func NewService(
 	jwtSecret string,
 	env string,
 	otpSender otp.Sender,
+	otpMaxAttempts int,
 ) *Service {
 	return &Service{
 		repo:              repo,
@@ -73,6 +75,7 @@ func NewService(
 		jwtSecret:         []byte(jwtSecret),
 		env:               strings.TrimSpace(strings.ToLower(env)),
 		otpSender:         otpSender,
+		otpMaxAttempts:    otpMaxAttempts,
 	}
 }
 
@@ -135,12 +138,12 @@ func (s *Service) RequestOTP(ctx context.Context, phone, clientIP string) *Servi
 	return nil
 }
 
-func (s *Service) VerifyOTP(ctx context.Context, phone, code string) (*OTPVerifyResult, *ServiceError) {
+func (s *Service) VerifyOTP(ctx context.Context, phone, code, clientIP string) (*OTPVerifyResult, *ServiceError) {
 	if phone == "" || code == "" {
 		return nil, &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone and code are required."}
 	}
 	if s.otpVerifyLimiter != nil {
-		allowed, err := s.otpVerifyLimiter.Allow(ctx, "auth_otp_verify:"+phone)
+		allowed, err := s.otpVerifyLimiter.Allow(ctx, "auth_otp_verify:"+clientIP+"|"+phone)
 		if err != nil {
 			return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "RATE_LIMIT_FAILED", Message: "Unable to validate OTP rate limits."}
 		}
@@ -157,6 +160,9 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code string) (*OTPVerify
 	}
 	if time.Now().After(ch.ExpiresAt) {
 		return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "OTP_EXPIRED", Message: "OTP has expired. Request a new code."}
+	}
+	if s.otpMaxAttempts > 0 && ch.Attempts >= s.otpMaxAttempts {
+		return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "OTP_LOCKED", Message: "OTP attempts exceeded. Request a new code."}
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(ch.CodeHash), []byte(code)); err != nil {
 		_ = s.repo.IncrementPhoneOTPAttempts(ctx, ch.ID)

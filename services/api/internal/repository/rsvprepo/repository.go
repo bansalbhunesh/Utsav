@@ -13,6 +13,7 @@ type OTPChallenge struct {
 	ID        uuid.UUID
 	CodeHash  string
 	ExpiresAt time.Time
+	Attempts  int
 }
 
 type RSVPItem struct {
@@ -43,6 +44,7 @@ type Repository interface {
 	DeleteRSVPOTPChallenges(ctx context.Context, eventID uuid.UUID, phone string) error
 	InsertRSVPOTPChallenge(ctx context.Context, eventID uuid.UUID, phone, codeHash string) error
 	GetLatestRSVPOTPChallenge(ctx context.Context, eventID uuid.UUID, phone string) (*OTPChallenge, error)
+	IncrementRSVPOTPAttempts(ctx context.Context, id uuid.UUID) error
 	DeleteRSVPOTPChallengeByID(ctx context.Context, id uuid.UUID) error
 	UpsertRSVPResponses(ctx context.Context, eventID uuid.UUID, phone string, items []RSVPItem) error
 	ListHostRSVPs(ctx context.Context, eventID uuid.UUID) ([]HostRSVPRow, error)
@@ -70,16 +72,16 @@ func (r *PGRepository) DeleteRSVPOTPChallenges(ctx context.Context, eventID uuid
 func (r *PGRepository) InsertRSVPOTPChallenge(ctx context.Context, eventID uuid.UUID, phone, codeHash string) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO rsvp_otp_challenges (event_id, phone, code_hash, expires_at)
-		VALUES ($1,$2,$3, now() + interval '10 minutes')`, eventID, phone, codeHash)
+		VALUES ($1,$2,$3, now() + interval '5 minutes')`, eventID, phone, codeHash)
 	return err
 }
 
 func (r *PGRepository) GetLatestRSVPOTPChallenge(ctx context.Context, eventID uuid.UUID, phone string) (*OTPChallenge, error) {
 	var ch OTPChallenge
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, code_hash, expires_at FROM rsvp_otp_challenges
+		SELECT id, code_hash, expires_at, attempts FROM rsvp_otp_challenges
 		WHERE event_id=$1 AND phone=$2 ORDER BY created_at DESC LIMIT 1`, eventID, phone).
-		Scan(&ch.ID, &ch.CodeHash, &ch.ExpiresAt)
+		Scan(&ch.ID, &ch.CodeHash, &ch.ExpiresAt, &ch.Attempts)
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +90,11 @@ func (r *PGRepository) GetLatestRSVPOTPChallenge(ctx context.Context, eventID uu
 
 func (r *PGRepository) DeleteRSVPOTPChallengeByID(ctx context.Context, id uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM rsvp_otp_challenges WHERE id=$1`, id)
+	return err
+}
+
+func (r *PGRepository) IncrementRSVPOTPAttempts(ctx context.Context, id uuid.UUID) error {
+	_, err := r.pool.Exec(ctx, `UPDATE rsvp_otp_challenges SET attempts=attempts+1 WHERE id=$1`, id)
 	return err
 }
 

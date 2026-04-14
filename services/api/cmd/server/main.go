@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -87,6 +89,13 @@ func main() {
 		MediaSigner:  media.URLSigner{BaseURL: cfg.ObjectStorePublicBaseURL},
 	}
 	window := time.Duration(cfg.RateLimitWindowSec) * time.Second
+	isProd := strings.EqualFold(strings.TrimSpace(cfg.Env), "production")
+	if isProd && strings.TrimSpace(cfg.DevOTPCode) != "" {
+		log.Fatal("DEV_OTP_CODE must be empty in production")
+	}
+	if isProd && (strings.TrimSpace(cfg.UpstashRESTURL) == "" || strings.TrimSpace(cfg.UpstashRESTToken) == "") {
+		log.Fatal("Upstash Redis must be configured in production for distributed rate limiting")
+	}
 	newLimiter := func(max int) ratelimit.Limiter {
 		if strings.TrimSpace(cfg.UpstashRESTURL) != "" && strings.TrimSpace(cfg.UpstashRESTToken) != "" {
 			return ratelimit.NewUpstashRESTLimiter(cfg.UpstashRESTURL, cfg.UpstashRESTToken, max, window)
@@ -97,6 +106,9 @@ func main() {
 	if strings.EqualFold(strings.TrimSpace(cfg.OTPProvider), "msg91") {
 		otpSender = otp.NewMSG91Sender(cfg.OTPAPIKey, cfg.OTPSenderID, "")
 	}
+	if isProd && otpSender == nil {
+		log.Fatal("OTP provider must be configured in production")
+	}
 	srv.AuthService = authservice.NewService(
 		authrepo.NewPGRepository(pool),
 		newLimiter(cfg.AuthOTPRequestLimit),
@@ -105,6 +117,7 @@ func main() {
 		cfg.JWTSecret,
 		cfg.Env,
 		otpSender,
+		cfg.OTPMaxAttempts,
 	)
 	srv.BillingService = billingservice.NewService(billingrepo.NewPGRepository(pool))
 	srv.BroadcastService = broadcastservice.NewService(broadcastrepo.NewPGRepository(pool))
@@ -117,19 +130,48 @@ func main() {
 		rsvprepo.NewPGRepository(pool),
 		newLimiter(cfg.RSVPOTPRequestLimit),
 		newLimiter(cfg.RSVPOTPVerifyLimit),
+		newLimiter(cfg.PublicRSVPSubmitLimit),
 		cfg.DevOTPCode,
 		cfg.JWTSecret,
 		cfg.Env,
 		otpSender,
+		cfg.OTPMaxAttempts,
 	)
 	srv.GuestService = guestservice.NewService(guestrepo.NewPGRepository(pool))
 	srv.ShagunService = shagunservice.NewService(shagunrepo.NewPGRepository(pool))
 	srv.VendorService = vendorservice.NewService(vendorrepo.NewPGRepository(pool))
 	srv.Mount(r)
 
+	if strings.TrimSpace(cfg.BetterstackHeartbeatURL) != "" {
+		go startHeartbeat(cfg.BetterstackHeartbeatURL)
+	}
+
 	addr := ":" + cfg.HTTPPort
 	log.Printf("utsav api listening on %s", addr)
 	if err := r.Run(addr); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func startHeartbeat(url string) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		req, err := http.NewRequest(http.MethodGet, strings.TrimSpace(url), nil)
+		if err != nil {
+			log.Printf("heartbeat request build failed: %v", err)
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("heartbeat send failed: %v", err)
+			continue
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			log.Printf("heartbeat responded non-2xx: %d", resp.StatusCode)
+		}
 	}
 }

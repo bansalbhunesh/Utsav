@@ -2,8 +2,10 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -37,6 +39,25 @@ type apiErrorEnvelope struct {
 }
 
 func writeAPIError(c *gin.Context, status int, code string, message string) {
+	c.Set("error_code", code)
+	logPayload := map[string]any{
+		"ts":         time.Now().UTC().Format(time.RFC3339),
+		"level":      "warn",
+		"request_id": c.GetString("request_id"),
+		"user_id":    c.GetString("user_id"),
+		"guest_id":   c.GetString("guest_id"),
+		"status":     status,
+		"error_code": code,
+		"error":      message,
+	}
+	if c.Request != nil {
+		logPayload["method"] = c.Request.Method
+		logPayload["path"] = c.Request.URL.Path
+		logPayload["endpoint"] = c.FullPath()
+	}
+	if b, err := json.Marshal(logPayload); err == nil {
+		gin.DefaultWriter.Write(append(b, '\n'))
+	}
 	c.JSON(status, apiErrorEnvelope{
 		Success: false,
 		Error: apiErrorDetail{
@@ -86,6 +107,7 @@ func (s *Server) requireUser(c *gin.Context) (uuid.UUID, bool) {
 		writeAPIError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Missing or invalid access token.")
 		return uuid.Nil, false
 	}
+	c.Set("user_id", uid.String())
 	return uid, true
 }
 
@@ -160,5 +182,6 @@ func (s *Server) guestBearer(c *gin.Context) (eventID uuid.UUID, phone string, o
 		writeAPIError(c, http.StatusUnauthorized, "INVALID_GUEST_TOKEN", "Guest session is invalid or expired.")
 		return uuid.Nil, "", false
 	}
+	c.Set("guest_id", ph)
 	return eid, ph, true
 }

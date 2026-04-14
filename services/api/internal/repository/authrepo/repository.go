@@ -13,6 +13,7 @@ type OTPChallenge struct {
 	ID        uuid.UUID
 	CodeHash  string
 	ExpiresAt time.Time
+	Attempts  int
 }
 
 type Repository interface {
@@ -44,16 +45,16 @@ func (r *PGRepository) DeletePhoneOTPChallenges(ctx context.Context, phone strin
 func (r *PGRepository) InsertPhoneOTPChallenge(ctx context.Context, phone, codeHash string) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO phone_otp_challenges (phone, code_hash, expires_at)
-		VALUES ($1, $2, now() + interval '10 minutes')`, phone, codeHash)
+		VALUES ($1, $2, now() + interval '5 minutes')`, phone, codeHash)
 	return err
 }
 
 func (r *PGRepository) GetLatestPhoneOTPChallenge(ctx context.Context, phone string) (*OTPChallenge, error) {
 	var ch OTPChallenge
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, code_hash, expires_at FROM phone_otp_challenges
+		SELECT id, code_hash, expires_at, attempts FROM phone_otp_challenges
 		WHERE phone=$1 ORDER BY created_at DESC LIMIT 1`, phone).
-		Scan(&ch.ID, &ch.CodeHash, &ch.ExpiresAt)
+		Scan(&ch.ID, &ch.CodeHash, &ch.ExpiresAt, &ch.Attempts)
 	if err != nil {
 		return nil, err
 	}

@@ -33,12 +33,16 @@ func Logger() gin.HandlerFunc {
 			"level":       "info",
 			"request_id":  c.GetString("request_id"),
 			"method":      c.Request.Method,
+			"endpoint":    c.FullPath(),
 			"path":        c.Request.URL.Path,
 			"status_code": c.Writer.Status(),
 			"status_text": http.StatusText(c.Writer.Status()),
 			"latency_ms":  elapsed.Milliseconds(),
 			"client_ip":   c.ClientIP(),
 			"user_agent":  c.Request.UserAgent(),
+			"user_id":     c.GetString("user_id"),
+			"guest_id":    c.GetString("guest_id"),
+			"error_code":  c.GetString("error_code"),
 		}
 		b, _ := json.Marshal(payload)
 		gin.DefaultWriter.Write(append(b, '\n'))

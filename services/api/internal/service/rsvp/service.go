@@ -39,29 +39,35 @@ type Service struct {
 	repo              rsvprepo.Repository
 	otpRequestLimiter ratelimit.Limiter
 	otpVerifyLimiter  ratelimit.Limiter
+	submitLimiter     ratelimit.Limiter
 	devOTP            string
 	jwtSecret         []byte
 	env               string
 	otpSender         otp.Sender
+	otpMaxAttempts    int
 }
 
 func NewService(
 	repo rsvprepo.Repository,
 	otpRequestLimiter ratelimit.Limiter,
 	otpVerifyLimiter ratelimit.Limiter,
+	submitLimiter ratelimit.Limiter,
 	devOTPCode string,
 	jwtSecret string,
 	env string,
 	otpSender otp.Sender,
+	otpMaxAttempts int,
 ) *Service {
 	return &Service{
 		repo:              repo,
 		otpRequestLimiter: otpRequestLimiter,
 		otpVerifyLimiter:  otpVerifyLimiter,
+		submitLimiter:     submitLimiter,
 		devOTP:            strings.TrimSpace(devOTPCode),
 		jwtSecret:         []byte(jwtSecret),
 		env:               strings.TrimSpace(strings.ToLower(env)),
 		otpSender:         otpSender,
+		otpMaxAttempts:    otpMaxAttempts,
 	}
 }
 
@@ -131,12 +137,12 @@ func (s *Service) RequestOTP(ctx context.Context, eventID uuid.UUID, slug, phone
 	return nil
 }
 
-func (s *Service) VerifyOTP(ctx context.Context, eventID uuid.UUID, phone, code string) (string, *ServiceError) {
+func (s *Service) VerifyOTP(ctx context.Context, eventID uuid.UUID, phone, code, clientIP string) (string, *ServiceError) {
 	if phone == "" || code == "" {
 		return "", &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone and code are required."}
 	}
 	if s.otpVerifyLimiter != nil {
-		allowed, err := s.otpVerifyLimiter.Allow(ctx, "rsvp_otp_verify:"+eventID.String()+"|"+phone)
+		allowed, err := s.otpVerifyLimiter.Allow(ctx, "rsvp_otp_verify:"+eventID.String()+"|"+clientIP+"|"+phone)
 		if err != nil {
 			return "", &ServiceError{Status: http.StatusInternalServerError, Code: "RATE_LIMIT_FAILED", Message: "Unable to validate RSVP OTP rate limits."}
 		}
@@ -154,7 +160,11 @@ func (s *Service) VerifyOTP(ctx context.Context, eventID uuid.UUID, phone, code 
 	if time.Now().After(ch.ExpiresAt) {
 		return "", &ServiceError{Status: http.StatusUnauthorized, Code: "OTP_EXPIRED", Message: "RSVP OTP has expired."}
 	}
+	if s.otpMaxAttempts > 0 && ch.Attempts >= s.otpMaxAttempts {
+		return "", &ServiceError{Status: http.StatusUnauthorized, Code: "OTP_LOCKED", Message: "RSVP OTP attempts exceeded. Request a new code."}
+	}
 	if err := bcrypt.CompareHashAndPassword([]byte(ch.CodeHash), []byte(code)); err != nil {
+		_ = s.repo.IncrementRSVPOTPAttempts(ctx, ch.ID)
 		return "", &ServiceError{Status: http.StatusUnauthorized, Code: "INVALID_OTP", Message: "Invalid RSVP OTP code."}
 	}
 	_ = s.repo.DeleteRSVPOTPChallengeByID(ctx, ch.ID)
@@ -166,7 +176,16 @@ func (s *Service) VerifyOTP(ctx context.Context, eventID uuid.UUID, phone, code 
 	return tok, nil
 }
 
-func (s *Service) SubmitRSVP(ctx context.Context, eventID, guestEventID uuid.UUID, phone string, items []SubmitItemInput) *ServiceError {
+func (s *Service) SubmitRSVP(ctx context.Context, eventID, guestEventID uuid.UUID, phone, clientIP string, items []SubmitItemInput) *ServiceError {
+	if s.submitLimiter != nil {
+		allowed, err := s.submitLimiter.Allow(ctx, "public_rsvp_submit:"+eventID.String()+"|"+clientIP+"|"+phone)
+		if err != nil {
+			return &ServiceError{Status: http.StatusInternalServerError, Code: "RATE_LIMIT_FAILED", Message: "Unable to validate RSVP submit rate limits."}
+		}
+		if !allowed {
+			return &ServiceError{Status: http.StatusTooManyRequests, Code: "RATE_LIMITED", Message: "Too many RSVP submissions. Please retry later."}
+		}
+	}
 	if eventID != guestEventID {
 		return &ServiceError{Status: http.StatusForbidden, Code: "WRONG_EVENT", Message: "Guest token does not match this event."}
 	}

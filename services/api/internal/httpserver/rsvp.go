@@ -79,7 +79,7 @@ func (s *Server) postPublicRSVPOTPVerify(c *gin.Context) {
 		writeAPIError(c, http.StatusInternalServerError, "RSVP_SERVICE_UNAVAILABLE", "RSVP service unavailable.")
 		return
 	}
-	tok, svcErr := s.RSVPService.VerifyOTP(c.Request.Context(), eid, body.Phone, body.Code)
+	tok, svcErr := s.RSVPService.VerifyOTP(c.Request.Context(), eid, body.Phone, body.Code, c.ClientIP())
 	if svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
@@ -122,7 +122,7 @@ func (s *Server) postPublicRSVP(c *gin.Context) {
 			PlusOneNames:        it.PlusOneNames,
 		})
 	}
-	if svcErr := s.RSVPService.SubmitRSVP(c.Request.Context(), eidSlug, geid, phone, inputs); svcErr != nil {
+	if svcErr := s.RSVPService.SubmitRSVP(c.Request.Context(), eidSlug, geid, phone, c.ClientIP(), inputs); svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
