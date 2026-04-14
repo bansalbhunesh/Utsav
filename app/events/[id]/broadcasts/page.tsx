@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getUserFacingError } from "@/lib/error-messages";
 import {
   parseHostBroadcastsResponse,
@@ -32,6 +32,7 @@ export default function EventBroadcastsPage() {
   const [sidesCsv, setSidesCsv] = useState("");
   const [onlyRsvpYes, setOnlyRsvpYes] = useState(false);
   const [includeSubIds, setIncludeSubIds] = useState<string[]>([]);
+  const queryClient = useQueryClient();
 
   const audience = useMemo(() => {
     const tags = tagCsv
@@ -51,7 +52,7 @@ export default function EventBroadcastsPage() {
     };
   }, [tagCsv, sidesCsv, onlyRsvpYes, includeSubIds]);
 
-  const { data, error, refetch } = useQuery({
+  const { data, error } = useQuery({
     queryKey: ["event-broadcasts", id],
     queryFn: async () => {
       const [subRaw, listRaw] = await Promise.all([
@@ -68,10 +69,9 @@ export default function EventBroadcastsPage() {
   const items = data?.items || [];
   const err = error ? getUserFacingError(error, "Failed to load broadcasts.") : actionErr;
 
-  async function createBroadcast() {
-    setActionErr(null);
-    try {
-      await apiFetch(`/v1/events/${id}/broadcasts`, {
+  const createBroadcastMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch(`/v1/events/${id}/broadcasts`, {
         method: "POST",
         json: {
           title,
@@ -79,10 +79,18 @@ export default function EventBroadcastsPage() {
           announcement_type: announcementType,
           audience,
         },
-      });
+      }),
+    onSuccess: async () => {
       setTitle("");
       setBody("");
-      await refetch();
+      await queryClient.invalidateQueries({ queryKey: ["event-broadcasts", id] });
+    },
+  });
+
+  async function createBroadcast() {
+    setActionErr(null);
+    try {
+      await createBroadcastMutation.mutateAsync();
     } catch (e) {
       setActionErr(getUserFacingError(e, "Failed to create broadcast."));
     }

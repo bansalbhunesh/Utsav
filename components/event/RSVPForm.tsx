@@ -30,7 +30,6 @@ interface SubEvent {
 }
 
 interface RSVPFormProps {
-  eventId: string
   eventTitle: string
   eventSlug: string
   subEvents: SubEvent[]
@@ -38,7 +37,7 @@ interface RSVPFormProps {
 
 type RSVPStep = 'IDENTITY' | 'VERIFY' | 'DETAILS' | 'SUCCESS'
 
-export function RSVPForm({ eventId, eventTitle, eventSlug, subEvents = [] }: RSVPFormProps) {
+export function RSVPForm({ eventTitle, eventSlug, subEvents = [] }: RSVPFormProps) {
   const [step, setStep] = useState<RSVPStep>('IDENTITY')
   const [phone, setPhone] = useState('')
   const [otp, setOtp] = useState('')

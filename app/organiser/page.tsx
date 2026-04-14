@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -18,101 +18,99 @@ import {
   CheckCircle2
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getUserFacingError } from "@/lib/error-messages";
+import { parseHostEventsResponse, parseOrganiserClientsResponse } from "@/lib/contracts/host";
 
 type Client = {
   id: string;
   name: string;
-  contact_email?: string;
-  contact_phone?: string;
-  notes?: string;
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  notes?: string | null;
 };
 
 type EventRow = { id: string; title: string; slug: string };
 
 export default function OrganiserPage() {
-  const [err, setErr] = useState<string | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
   const companyName = "Utsav Planner";
   const [description] = useState("Premium Event Management");
-  const [clients, setClients] = useState<Client[]>([]);
-  const [events, setEvents] = useState<EventRow[]>([]);
   const [clientName, setClientName] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [selectedClientId, setSelectedClientId] = useState("");
   const [selectedEventId, setSelectedEventId] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      const [c, e] = await Promise.all([
-        apiFetch<{ clients: Client[] }>("/v1/organiser/clients"),
-        apiFetch<{ events: EventRow[] }>("/v1/events"),
-      ]);
-      setClients(c.clients || []);
-      setEvents(e.events || []);
-      if (!selectedClientId && c.clients?.length) setSelectedClientId(c.clients[0].id);
-      if (!selectedEventId && e.events?.length) setSelectedEventId(e.events[0].id);
-    } catch (err: unknown) {
-      setErr(err instanceof Error ? err.message : "Failed to load organiser data");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [selectedClientId, selectedEventId]);
-
-  useEffect(() => {
-    void (async () => {
+  const queryClient = useQueryClient();
+  const organiserQuery = useQuery({
+    queryKey: ["organiser-overview"],
+    queryFn: async () => {
+      const eventsRaw = await apiFetch<unknown>("/v1/events");
+      let clientsRaw: unknown;
       try {
-        await load();
+        clientsRaw = await apiFetch<unknown>("/v1/organiser/clients");
       } catch {
-        // Auto-create profile if missing
-        try {
-          await apiFetch("/v1/organiser/profile", {
-            method: "POST",
-            json: { company_name: companyName, description },
-          });
-          await load();
-        } catch {
-          setErr("Failed to initialize organiser profile.");
-        }
+        await apiFetch("/v1/organiser/profile", {
+          method: "POST",
+          json: { company_name: companyName, description },
+        });
+        clientsRaw = await apiFetch<unknown>("/v1/organiser/clients");
       }
-    })();
-  }, [load, companyName, description]);
-
-  async function createClient() {
-    if (!clientName) return;
-    setErr(null);
-    setIsSubmitting(true);
-    try {
-      await apiFetch("/v1/organiser/clients", {
+      return {
+        clients: parseOrganiserClientsResponse(clientsRaw).clients as Client[],
+        events: parseHostEventsResponse(eventsRaw).events as EventRow[],
+      };
+    },
+  });
+  const clients = organiserQuery.data?.clients || [];
+  const events = organiserQuery.data?.events || [];
+  const isLoading = organiserQuery.isLoading;
+  const err = organiserQuery.error
+    ? getUserFacingError(organiserQuery.error, "Failed to load organiser data")
+    : actionErr;
+  const activeClientId = selectedClientId || clients[0]?.id || "";
+  const activeEventId = selectedEventId || events[0]?.id || "";
+  const createClientMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch("/v1/organiser/clients", {
         method: "POST",
         json: { name: clientName, contact_email: clientEmail, contact_phone: clientPhone, notes: "" },
-      });
+      }),
+    onSuccess: async () => {
       setClientName("");
       setClientEmail("");
       setClientPhone("");
-      await load();
-    } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Failed to create client");
-    } finally {
-      setIsSubmitting(false);
+      await queryClient.invalidateQueries({ queryKey: ["organiser-overview"] });
+    },
+  });
+  const linkEventMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch(`/v1/organiser/clients/${activeClientId}/events`, {
+        method: "POST",
+        json: { event_id: activeEventId },
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["organiser-overview"] });
+    },
+  });
+
+  async function createClient() {
+    if (!clientName) return;
+    setActionErr(null);
+    try {
+      await createClientMutation.mutateAsync();
+    } catch (e) {
+      setActionErr(getUserFacingError(e, "Failed to create client"));
     }
   }
 
   async function linkEvent() {
-    setErr(null);
-    if (!selectedClientId || !selectedEventId) return;
-    setIsSubmitting(true);
+    setActionErr(null);
+    if (!activeClientId || !activeEventId) return;
     try {
-      await apiFetch(`/v1/organiser/clients/${selectedClientId}/events`, {
-        method: "POST",
-        json: { event_id: selectedEventId },
-      });
-      await load();
-    } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Failed to link event");
-    } finally {
-      setIsSubmitting(false);
+      await linkEventMutation.mutateAsync();
+    } catch (e) {
+      setActionErr(getUserFacingError(e, "Failed to link event"));
     }
   }
 
@@ -177,10 +175,10 @@ export default function OrganiserPage() {
                   </div>
                   <Button 
                     onClick={createClient} 
-                    disabled={isSubmitting || !clientName}
+                    disabled={createClientMutation.isPending || !clientName}
                     className="w-full h-14 bg-zinc-900 hover:bg-black text-white font-bold rounded-2xl shadow-xl transition-all"
                   >
-                    {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Add to Portfolio'}
+                    {createClientMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Add to Portfolio'}
                   </Button>
                </div>
             </Card>
@@ -198,7 +196,7 @@ export default function OrganiserPage() {
                <div className="space-y-4">
                   <select 
                     className="w-full h-14 rounded-2xl border border-zinc-100 bg-zinc-50 px-4 text-sm font-bold text-zinc-700 outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-                    value={selectedClientId}
+                    value={activeClientId}
                     onChange={e => setSelectedClientId(e.target.value)}
                   >
                     <option value="">Select client...</option>
@@ -207,7 +205,7 @@ export default function OrganiserPage() {
 
                   <select 
                     className="w-full h-14 rounded-2xl border border-zinc-100 bg-zinc-50 px-4 text-sm font-bold text-zinc-700 outline-none focus:ring-2 focus:ring-orange-500 transition-all"
-                    value={selectedEventId}
+                    value={activeEventId}
                     onChange={e => setSelectedEventId(e.target.value)}
                   >
                     <option value="">Select event...</option>
@@ -216,10 +214,10 @@ export default function OrganiserPage() {
 
                   <Button 
                     onClick={linkEvent}
-                    disabled={isSubmitting || !selectedClientId || !selectedEventId}
+                    disabled={linkEventMutation.isPending || !activeClientId || !activeEventId}
                     className="w-full h-14 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl shadow-xl transition-all"
                   >
-                     {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Confirm Association'}
+                     {linkEventMutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Confirm Association'}
                   </Button>
                </div>
             </Card>

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { getUserFacingError } from "@/lib/error-messages";
 
 export default function CashLoggerPage() {
   const { id } = useParams();
@@ -22,7 +23,7 @@ export default function CashLoggerPage() {
       setMsg("Logged successfully.");
       setGuestPhone("");
     } catch (e) {
-      setMsg(String(e));
+      setMsg(getUserFacingError(e, "Failed to log cash entry."));
     }
   }
 

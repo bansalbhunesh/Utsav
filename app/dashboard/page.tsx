@@ -20,19 +20,15 @@ import { apiFetch } from '@/lib/api'
 import { format } from 'date-fns'
 import { useQuery } from '@tanstack/react-query'
 import { getUserFacingError } from '@/lib/error-messages'
-
-interface DashboardEvent {
-  id: string
-  slug: string
-  title: string
-  event_type: string
-  date_start: string
-}
+import { parseHostEventsResponse } from '@/lib/contracts/host'
 
 export default function DashboardPage() {
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['dashboard-events'],
-    queryFn: () => apiFetch<{ events: DashboardEvent[] }>('/v1/events'),
+    queryFn: async () => {
+      const raw = await apiFetch<unknown>('/v1/events')
+      return parseHostEventsResponse(raw)
+    },
   })
   const events = useMemo(() => data?.events || [], [data])
   const errorMessage = useMemo(

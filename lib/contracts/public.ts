@@ -21,6 +21,7 @@ export const publicEventSchema = z.object({
   id: z.string(),
   slug: z.string().optional(),
   title: z.string(),
+  event_type: z.string().optional(),
   description: z.string().optional(),
   branding_color: z.string().optional(),
   cover_image: z.string().optional(),

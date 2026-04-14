@@ -1,50 +1,57 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getUserFacingError } from "@/lib/error-messages";
+import {
+  parseHostBillingCheckoutsResponse,
+  parseHostEventsResponse,
+} from "@/lib/contracts/host";
 
 type EventRow = { id: string; title: string };
 type Checkout = { id: string; tier: string; status: string; order_id: string; event_id?: string };
 
 export default function BillingPage() {
-  const [err, setErr] = useState<string | null>(null);
-  const [events, setEvents] = useState<EventRow[]>([]);
-  const [items, setItems] = useState<Checkout[]>([]);
+  const [actionErr, setActionErr] = useState<string | null>(null);
   const [eventId, setEventId] = useState("");
   const [tier, setTier] = useState("pro");
+  const queryClient = useQueryClient();
 
-  const load = useCallback(async () => {
-    const [e, b] = await Promise.all([
-      apiFetch<{ events: EventRow[] }>("/v1/events"),
-      apiFetch<{ checkouts: Checkout[] }>("/v1/billing/checkouts"),
-    ]);
-    setEvents(e.events || []);
-    setItems(b.checkouts || []);
-    if (!eventId && e.events?.length) setEventId(e.events[0].id);
-  }, [eventId]);
+  const { data, error } = useQuery({
+    queryKey: ["billing-overview"],
+    queryFn: async () => {
+      const [eRaw, bRaw] = await Promise.all([
+        apiFetch<unknown>("/v1/events"),
+        apiFetch<unknown>("/v1/billing/checkouts"),
+      ]);
+      return {
+        events: parseHostEventsResponse(eRaw).events as EventRow[],
+        items: parseHostBillingCheckoutsResponse(bRaw).checkouts as Checkout[],
+      };
+    },
+  });
+  const events = data?.events || [];
+  const items = data?.items || [];
+  const err = error ? getUserFacingError(error, "Failed to load billing data.") : actionErr;
 
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        await load();
-      } catch (e) {
-        if (active) setErr(String(e));
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [load]);
+  const selectedEventId = eventId || events[0]?.id || "";
+
+  const createCheckoutMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch("/v1/billing/checkout", { method: "POST", json: { tier, event_id: selectedEventId } }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["billing-overview"] });
+    },
+  });
 
   async function createCheckout() {
-    setErr(null);
+    setActionErr(null);
     try {
-      await apiFetch("/v1/billing/checkout", { method: "POST", json: { tier, event_id: eventId } });
-      await load();
+      await createCheckoutMutation.mutateAsync();
     } catch (e) {
-      setErr(String(e));
+      setActionErr(getUserFacingError(e, "Failed to create checkout."));
     }
   }
 
@@ -59,7 +66,7 @@ export default function BillingPage() {
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
         <h2 className="text-sm font-medium text-zinc-300">Create checkout</h2>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          <select className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm" value={eventId} onChange={(e) => setEventId(e.target.value)}>
+          <select className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm" value={selectedEventId} onChange={(e) => setEventId(e.target.value)}>
             <option value="">Select event</option>
             {events.map((ev) => (
               <option key={ev.id} value={ev.id}>{ev.title}</option>
@@ -70,7 +77,12 @@ export default function BillingPage() {
             <option value="elite">Elite</option>
           </select>
         </div>
-        <button type="button" onClick={() => void createCheckout()} className="mt-3 rounded bg-amber-500 px-4 py-2 text-sm font-semibold text-black">
+        <button
+          type="button"
+          onClick={() => void createCheckout()}
+          disabled={!selectedEventId}
+          className="mt-3 rounded bg-amber-500 px-4 py-2 text-sm font-semibold text-black disabled:opacity-50 disabled:cursor-not-allowed"
+        >
           Create checkout order
         </button>
       </section>

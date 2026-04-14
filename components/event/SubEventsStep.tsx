@@ -33,7 +33,6 @@ import {
 } from '@/components/ui/dialog'
 import { useEventCreationStore } from '@/store/event-creation-store'
 import { cn } from '@/lib/utils'
-import { SubEvent } from '@/types'
 
 const subEventSchema = z.object({
   name: z.string().min(2, 'Name is required'),
@@ -79,12 +78,14 @@ export function SubEventsStep() {
         </div>
         
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="bg-orange-600 hover:bg-orange-700 text-white rounded-xl shadow-lg shadow-orange-100">
-              <Plus className="mr-2 h-4 w-4" />
-              Add Function
-            </Button>
-          </DialogTrigger>
+          <DialogTrigger
+            render={
+              <Button className="bg-orange-600 hover:bg-orange-700 text-white rounded-xl shadow-lg shadow-orange-100">
+                <Plus className="mr-2 h-4 w-4" />
+                Add Function
+              </Button>
+            }
+          />
           <DialogContent className="sm:max-w-[500px] rounded-3xl">
             <DialogHeader>
               <DialogTitle className="text-2xl font-bold font-heading">Add New Function</DialogTitle>
@@ -111,23 +112,18 @@ export function SubEventsStep() {
                     <FormItem className="flex flex-col">
                       <FormLabel>Date & Time</FormLabel>
                       <Popover>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant={"outline"}
-                              className={cn(
-                                "rounded-xl pl-3 text-left font-normal",
-                                !field.value && "text-zinc-400"
-                              )}
-                            >
-                              {field.value ? (
-                                format(field.value, "PPP p")
-                              ) : (
-                                <span>Pick a date & time</span>
-                              )}
-                              <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
-                            </Button>
-                          </FormControl>
+                        <PopoverTrigger
+                          className={cn(
+                            "inline-flex h-10 w-full items-center justify-start rounded-xl border border-input bg-transparent px-3 py-2 text-left text-sm font-normal shadow-xs",
+                            !field.value && "text-zinc-400"
+                          )}
+                        >
+                          {field.value ? (
+                            format(field.value, "PPP p")
+                          ) : (
+                            <span>Pick a date & time</span>
+                          )}
+                          <CalendarIcon className="ml-auto h-4 w-4 opacity-50" />
                         </PopoverTrigger>
                         <PopoverContent className="w-auto p-0" align="start">
                           <Calendar

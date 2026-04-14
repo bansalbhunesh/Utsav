@@ -1,6 +1,6 @@
 'use client'
 
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { format } from 'date-fns'
@@ -55,6 +55,7 @@ export function DetailsStep() {
       co_owner_contact: eventData.co_owner_contact || '',
     },
   })
+  const startDate = useWatch({ control: form.control, name: 'start_date' })
 
   function onSubmit(values: z.infer<typeof formSchema>) {
     setEventData({
@@ -71,7 +72,7 @@ export function DetailsStep() {
         {/* Muhurat Helper */}
         <div className="bg-orange-50/50 p-4 rounded-2xl border border-orange-100">
            <MuhuratHelper 
-              selectedDate={form.watch('start_date')}
+              selectedDate={startDate}
               onSelect={(date) => {
                 form.setValue('start_date', date)
                 // Default end date to same day if not set

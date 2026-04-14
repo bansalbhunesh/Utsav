@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getUserFacingError } from "@/lib/error-messages";
 import {
   parseHostGuestsImportResponse,
@@ -21,8 +21,9 @@ export default function GuestsPage() {
   const [csv, setCsv] = useState("name,phone\nPriya,+919876543210");
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
-  const { data, error, refetch } = useQuery({
+  const { data, error } = useQuery({
     queryKey: ["event-guests", eventId],
     queryFn: async () => {
       const raw = await apiFetch<unknown>(`/v1/events/${eventId}/guests`);
@@ -32,16 +33,37 @@ export default function GuestsPage() {
   const guests: Guest[] = data?.guests || [];
   const err = error ? getUserFacingError(error, "Failed to load guests.") : actionErr;
 
+  const addGuestMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch(`/v1/events/${eventId}/guests`, {
+        method: "POST",
+        json: { name, phone },
+      }),
+    onSuccess: async () => {
+      setName("");
+      setPhone("");
+      await queryClient.invalidateQueries({ queryKey: ["event-guests", eventId] });
+    },
+  });
+
+  const importGuestsMutation = useMutation({
+    mutationFn: async () => {
+      const raw = await apiFetch<unknown>(
+        `/v1/events/${eventId}/guests/import`,
+        { method: "POST", json: { csv } },
+      );
+      return parseHostGuestsImportResponse(raw);
+    },
+    onSuccess: async (d) => {
+      setImportMsg(`Imported ${d.imported}. Row errors: ${d.errors?.length ?? 0}.`);
+      await queryClient.invalidateQueries({ queryKey: ["event-guests", eventId] });
+    },
+  });
+
   async function addGuest() {
     setActionErr(null);
     try {
-      await apiFetch(`/v1/events/${eventId}/guests`, {
-        method: "POST",
-        json: { name, phone },
-      });
-      setName("");
-      setPhone("");
-      await refetch();
+      await addGuestMutation.mutateAsync();
     } catch (e) {
       setActionErr(getUserFacingError(e, "Failed to add guest."));
     }
@@ -51,13 +73,7 @@ export default function GuestsPage() {
     setActionErr(null);
     setImportMsg(null);
     try {
-      const raw = await apiFetch<unknown>(
-        `/v1/events/${eventId}/guests/import`,
-        { method: "POST", json: { csv } },
-      );
-      const d = parseHostGuestsImportResponse(raw);
-      setImportMsg(`Imported ${d.imported}. Row errors: ${d.errors?.length ?? 0}.`);
-      await refetch();
+      await importGuestsMutation.mutateAsync();
     } catch (e) {
       setActionErr(getUserFacingError(e, "Failed to import guests CSV."));
     }

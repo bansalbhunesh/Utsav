@@ -4,6 +4,19 @@ export const hostEventSchema = z.object({
   id: z.string(),
   slug: z.string(),
   title: z.string(),
+  event_type: z.string().optional(),
+  date_start: z.string().optional(),
+})
+
+export const hostEventDetailSchema = hostEventSchema.extend({
+  couple_name_a: z.unknown().optional(),
+  couple_name_b: z.unknown().optional(),
+  date_start: z.unknown().optional(),
+  date_end: z.unknown().optional(),
+})
+
+export const hostEventsResponseSchema = z.object({
+  events: z.array(hostEventSchema).default([]),
 })
 
 export const hostShagunItemSchema = z.object({
@@ -41,6 +54,22 @@ export const hostSubEventSchema = z.object({
 
 export const hostSubEventsResponseSchema = z.object({
   sub_events: z.array(hostSubEventSchema).default([]),
+})
+
+export const hostVendorSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  category: z.string().optional().default(''),
+  phone: z.string().optional().default(''),
+  email: z.string().optional().default(''),
+  advance_paise: z.number().optional().default(0),
+  total_paise: z.number().optional().default(0),
+  notes: z.string().optional().default(''),
+  status: z.string().optional().default(''),
+})
+
+export const hostVendorsResponseSchema = z.object({
+  vendors: z.array(hostVendorSchema).default([]),
 })
 
 export const hostBroadcastSchema = z.object({
@@ -89,8 +118,52 @@ export const hostGalleryPresignResponseSchema = z.object({
   }),
 })
 
+export const hostBillingCheckoutSchema = z.object({
+  id: z.string(),
+  tier: z.string(),
+  status: z.string(),
+  order_id: z.string(),
+  event_id: z.string().optional(),
+})
+
+export const hostBillingCheckoutsResponseSchema = z.object({
+  checkouts: z.array(hostBillingCheckoutSchema).default([]),
+})
+
+export const organiserClientSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  contact_email: z.string().optional().nullable(),
+  contact_phone: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+})
+
+export const organiserClientsResponseSchema = z.object({
+  clients: z.array(organiserClientSchema).default([]),
+})
+
+export const hostMemoryBookGenerateResponseSchema = z.object({
+  slug: z.string(),
+  public_api_path: z.string(),
+  payload: z.record(z.string(), z.unknown()),
+  export_pdf_available: z.boolean(),
+})
+
+export const hostMemoryBookExportResponseSchema = z.object({
+  status: z.string().optional(),
+  next_step: z.string().optional(),
+})
+
 export function parseHostEvent(input: unknown) {
   return hostEventSchema.parse(input)
+}
+
+export function parseHostEventDetail(input: unknown) {
+  return hostEventDetailSchema.parse(input)
+}
+
+export function parseHostEventsResponse(input: unknown) {
+  return hostEventsResponseSchema.parse(input)
 }
 
 export function parseHostShagunResponse(input: unknown) {
@@ -109,6 +182,10 @@ export function parseHostSubEventsResponse(input: unknown) {
   return hostSubEventsResponseSchema.parse(input)
 }
 
+export function parseHostVendorsResponse(input: unknown) {
+  return hostVendorsResponseSchema.parse(input)
+}
+
 export function parseHostBroadcastsResponse(input: unknown) {
   return hostBroadcastsResponseSchema.parse(input)
 }
@@ -123,4 +200,20 @@ export function parseHostGalleryAssetsResponse(input: unknown) {
 
 export function parseHostGalleryPresignResponse(input: unknown) {
   return hostGalleryPresignResponseSchema.parse(input)
+}
+
+export function parseHostBillingCheckoutsResponse(input: unknown) {
+  return hostBillingCheckoutsResponseSchema.parse(input)
+}
+
+export function parseOrganiserClientsResponse(input: unknown) {
+  return organiserClientsResponseSchema.parse(input)
+}
+
+export function parseHostMemoryBookGenerateResponse(input: unknown) {
+  return hostMemoryBookGenerateResponseSchema.parse(input)
+}
+
+export function parseHostMemoryBookExportResponse(input: unknown) {
+  return hostMemoryBookExportResponseSchema.parse(input)
 }

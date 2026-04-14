@@ -8,7 +8,13 @@ import { useQuery } from "@tanstack/react-query";
 import { getUserFacingError } from "@/lib/error-messages";
 import { parseHostShagunResponse } from "@/lib/contracts/host";
 
-type Row = { id: string; channel: string; amount_paise: number | null; blessing_note: string; status: string };
+type Row = {
+  id: string;
+  channel: string;
+  amount_paise: number | null;
+  status: string;
+  meta?: { sender_name?: string };
+};
 
 export default function ShagunHostPage() {
   const { id } = useParams();
@@ -35,7 +41,9 @@ export default function ShagunHostPage() {
         {rows.map((r) => (
           <li key={r.id} className="rounded border border-zinc-800 px-3 py-2 text-zinc-200">
             {r.channel} — ₹{r.amount_paise != null ? (r.amount_paise / 100).toFixed(2) : "—"} — {r.status}
-            {r.blessing_note ? <span className="block text-zinc-500">&ldquo;{r.blessing_note}&rdquo;</span> : null}
+            {r.meta?.sender_name ? (
+              <span className="block text-zinc-500">&ldquo;{r.meta.sender_name}&rdquo;</span>
+            ) : null}
           </li>
         ))}
       </ul>

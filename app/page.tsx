@@ -1,11 +1,10 @@
 import Link from 'next/link'
+import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { 
   Sparkles, 
   PartyPopper, 
   ChevronRight, 
-  Heart, 
-  Calendar, 
   ShieldCheck, 
   Zap, 
   Star 
@@ -101,7 +100,7 @@ export default function LandingPage() {
             <div className="flex -space-x-4">
                {[1,2,3,4,5].map(i => (
                  <div key={i} className="w-12 h-12 rounded-full border-4 border-white bg-zinc-100 overflow-hidden" title={`User ${i}`}>
-                    <img src={`https://i.pravatar.cc/150?u=${i}`} alt={`User ${i}`} />
+                    <Image src={`https://i.pravatar.cc/150?u=${i}`} alt={`User ${i}`} width={48} height={48} className="h-full w-full object-cover" unoptimized />
                  </div>
                ))}
             </div>

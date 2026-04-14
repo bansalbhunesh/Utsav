@@ -4,31 +4,29 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
-
-type GenerateResp = {
-  slug: string;
-  public_api_path: string;
-  payload: Record<string, unknown>;
-  export_pdf_available: boolean;
-};
+import { getUserFacingError } from "@/lib/error-messages";
+import {
+  parseHostMemoryBookExportResponse,
+  parseHostMemoryBookGenerateResponse,
+} from "@/lib/contracts/host";
 
 export default function EventMemoryBookPage() {
   const params = useParams();
   const id = String(params.id || "");
   const [err, setErr] = useState<string | null>(null);
-  const [data, setData] = useState<GenerateResp | null>(null);
+  const [data, setData] = useState<ReturnType<typeof parseHostMemoryBookGenerateResponse> | null>(null);
   const [exportMsg, setExportMsg] = useState<string>("");
 
   async function generate() {
     setErr(null);
     setExportMsg("");
     try {
-      const d = await apiFetch<GenerateResp>(`/v1/events/${id}/memory-book/generate`, {
+      const raw = await apiFetch<unknown>(`/v1/events/${id}/memory-book/generate`, {
         method: "POST",
       });
-      setData(d);
+      setData(parseHostMemoryBookGenerateResponse(raw));
     } catch (e) {
-      setErr(String(e));
+      setErr(getUserFacingError(e, "Failed to generate memory book payload."));
     }
   }
 
@@ -36,13 +34,14 @@ export default function EventMemoryBookPage() {
     setErr(null);
     setExportMsg("");
     try {
-      const d = await apiFetch<{ status?: string; next_step?: string }>(
+      const raw = await apiFetch<unknown>(
         `/v1/events/${id}/memory-book/export`,
         { method: "POST" },
       );
+      const d = parseHostMemoryBookExportResponse(raw);
       setExportMsg(d.next_step || d.status || "Export requested");
     } catch (e) {
-      setErr(String(e));
+      setErr(getUserFacingError(e, "Failed to queue memory book export."));
     }
   }
 

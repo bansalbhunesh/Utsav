@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { useRouter } from 'next/navigation'
 import { signInWithPhone, verifyOtp } from '@/lib/auth'
 import { Loader2, Phone, KeyRound } from 'lucide-react'
+import { getUserFacingError } from '@/lib/error-messages'
 
 export function LoginForm() {
   const router = useRouter()
@@ -28,7 +29,7 @@ export function LoginForm() {
     
     setIsLoading(false)
     if (signInError) {
-      setError(signInError.message)
+      setError(getUserFacingError(signInError, 'Failed to send OTP.'))
     } else {
       setStep('otp')
     }
@@ -44,7 +45,7 @@ export function LoginForm() {
 
     setIsLoading(false)
     if (verifyError) {
-      setError(verifyError.message)
+      setError(getUserFacingError(verifyError, 'Failed to verify OTP.'))
     } else {
       router.push('/dashboard')
     }

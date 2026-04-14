@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
@@ -13,6 +13,9 @@ import {
 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import { paymentService } from '@/lib/services/PaymentService'
+import { getUserFacingError } from '@/lib/error-messages'
+import { parseHostVendorsResponse } from '@/lib/contracts/host'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 interface Vendor {
   id: string
@@ -25,59 +28,71 @@ interface Vendor {
 }
 
 export function VendorManager({ eventId }: { eventId: string }) {
-  const [vendors, setVendors] = useState<Vendor[]>([])
   const [isAdding, setIsAdding] = useState(false)
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   
   const [newName, setNewName] = useState('')
   const [newCategory, setNewCategory] = useState('')
   const [newBudget, setNewBudget] = useState('')
 
-  const fetchVendors = useCallback(async () => {
-    try {
-      const data = await apiFetch<{ vendors: Vendor[] }>(`/v1/events/${eventId}/vendors`)
-      setVendors(data.vendors || [])
-    } catch {
-      setError('Failed to load vendors')
-    } finally {
-      setLoading(false)
-    }
-  }, [eventId])
+  const queryClient = useQueryClient()
+  const vendorsQuery = useQuery({
+    queryKey: ['event-vendors', eventId],
+    queryFn: async () => {
+      const raw = await apiFetch<unknown>(`/v1/events/${eventId}/vendors`)
+      return parseHostVendorsResponse(raw).vendors as Vendor[]
+    },
+  })
+  const vendors = vendorsQuery.data || []
+  const loading = vendorsQuery.isLoading
+  const queryError = useMemo(
+    () => (vendorsQuery.error ? getUserFacingError(vendorsQuery.error, 'Failed to load vendors') : null),
+    [vendorsQuery.error]
+  )
 
-  useEffect(() => {
-    void fetchVendors()
-  }, [fetchVendors])
-
-  const handleAdd = async () => {
-    if (!newName) return
-    setError(null)
-    try {
-      await apiFetch(`/v1/events/${eventId}/vendors`, {
+  const addVendorMutation = useMutation({
+    mutationFn: async () =>
+      apiFetch(`/v1/events/${eventId}/vendors`, {
         method: 'POST',
         json: {
           name: newName,
           category: newCategory,
           total_paise: Math.round((parseFloat(newBudget) || 0) * 100),
-          advance_paise: 0
-        }
-      })
+          advance_paise: 0,
+        },
+      }),
+    onSuccess: async () => {
       setNewName('')
       setNewCategory('')
       setNewBudget('')
       setIsAdding(false)
-      fetchVendors()
-    } catch {
-      setError('Failed to add vendor')
+      await queryClient.invalidateQueries({ queryKey: ['event-vendors', eventId] })
+    },
+  })
+
+  const deleteVendorMutation = useMutation({
+    mutationFn: async (id: string) => apiFetch(`/v1/events/${eventId}/vendors/${id}`, { method: 'DELETE' }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['event-vendors', eventId] })
+    },
+  })
+
+  const handleAdd = async () => {
+    if (!newName) return
+    setError(null)
+    try {
+      await addVendorMutation.mutateAsync()
+    } catch (err) {
+      setError(getUserFacingError(err, 'Failed to add vendor'))
     }
   }
 
   const handleDelete = async (id: string) => {
+    setError(null)
     try {
-      await apiFetch(`/v1/events/${eventId}/vendors/${id}`, { method: 'DELETE' })
-      fetchVendors()
-    } catch {
-      setError('Failed to delete vendor')
+      await deleteVendorMutation.mutateAsync(id)
+    } catch (err) {
+      setError(getUserFacingError(err, 'Failed to delete vendor'))
     }
   }
 
@@ -113,9 +128,9 @@ export function VendorManager({ eventId }: { eventId: string }) {
         )}
       </div>
 
-      {error && (
+      {(error || queryError) && (
         <div className="p-3 bg-red-50 text-red-600 text-[10px] font-bold uppercase tracking-wider rounded-xl text-center">
-          {error}
+          {error || queryError}
         </div>
       )}
 

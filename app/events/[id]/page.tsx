@@ -2,81 +2,79 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { getUserFacingError } from "@/lib/error-messages";
 import {
   buildGuestInviteUrl,
   buildWhatsAppInviteMessage,
   whatsappSendUrl,
 } from "@/lib/inviteShare";
+import {
+  parseHostEventDetail,
+  parseHostSubEventsResponse,
+} from "@/lib/contracts/host";
 
 type SubEvent = {
   id: string;
   name: string;
-  sub_type: string;
-  starts_at: string | null;
-  venue_label: string;
-  dress_code: string;
+  sub_type?: string;
+  starts_at?: string | null;
+  venue_label?: string;
+  dress_code?: string;
 };
 
 export default function EventDetailPage() {
   const params = useParams();
   const id = String(params.id || "");
-  const [title, setTitle] = useState("");
-  const [slug, setSlug] = useState("");
-  const [err, setErr] = useState<string | null>(null);
-  const [subs, setSubs] = useState<SubEvent[]>([]);
+  const [actionErr, setActionErr] = useState<string | null>(null);
   const [seName, setSeName] = useState("Ceremony");
   const [seType, setSeType] = useState("ceremony");
   const [seStart, setSeStart] = useState("");
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const [copied, setCopied] = useState(false);
-  const [shareMeta, setShareMeta] = useState<Record<string, unknown>>({});
+  const queryClient = useQueryClient();
 
-  const loadSubs = useCallback(async () => {
-    const d = await apiFetch<{ sub_events: SubEvent[] }>(`/v1/events/${id}/sub-events`);
-    setSubs(d.sub_events || []);
-  }, [id]);
+  const { data, error } = useQuery({
+    queryKey: ["event-detail", id],
+    queryFn: async () => {
+      const [eventRaw, subsRaw] = await Promise.all([
+        apiFetch<unknown>(`/v1/events/${id}`),
+        apiFetch<unknown>(`/v1/events/${id}/sub-events`),
+      ]);
+      const event = parseHostEventDetail(eventRaw);
+      const subs = parseHostSubEventsResponse(subsRaw).sub_events as SubEvent[];
+      return { event, subs };
+    },
+  });
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const d = await apiFetch<{
-          title: string;
-          slug: string;
-          couple_name_a?: unknown;
-          couple_name_b?: unknown;
-          date_start?: unknown;
-          date_end?: unknown;
-        }>(`/v1/events/${id}`);
-        setTitle(d.title);
-        setSlug(d.slug);
-        setShareMeta({
-          title: d.title,
-          couple_name_a: d.couple_name_a,
-          couple_name_b: d.couple_name_b,
-          date_start: d.date_start,
-          date_end: d.date_end,
-        });
-        await loadSubs();
-      } catch (e) {
-        setErr(String(e));
-      }
-    })();
-  }, [id, loadSubs]);
+  const title = data?.event.title || "";
+  const slug = data?.event.slug || "";
+  const subs = data?.subs || [];
+  const shareMeta = data?.event || {};
+  const err = error ? getUserFacingError(error, "Failed to load event details.") : actionErr;
 
-  async function addSubEvent() {
-    setErr(null);
-    try {
+  const addSubEventMutation = useMutation({
+    mutationFn: async () => {
       const json: Record<string, unknown> = { name: seName, sub_type: seType };
       if (seStart.trim()) json.starts_at = new Date(seStart).toISOString();
-      await apiFetch(`/v1/events/${id}/sub-events`, { method: "POST", json });
+      return apiFetch(`/v1/events/${id}/sub-events`, { method: "POST", json });
+    },
+    onSuccess: async () => {
       setSeName("Ceremony");
       setSeType("ceremony");
       setSeStart("");
-      await loadSubs();
+      await queryClient.invalidateQueries({ queryKey: ["event-detail", id] });
+    },
+  });
+
+  async function addSubEvent() {
+    setActionErr(null);
+    try {
+      await addSubEventMutation.mutateAsync();
     } catch (e) {
-      setErr(String(e));
+      setActionErr(getUserFacingError(e, "Failed to add sub-event."));
     }
   }
 

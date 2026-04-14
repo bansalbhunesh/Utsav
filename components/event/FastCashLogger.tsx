@@ -15,6 +15,7 @@ import {
 import { apiFetch } from '@/lib/api'
 import { Confetti } from '@/components/ui/Confetti'
 import { cn } from '@/lib/utils'
+import { getUserFacingError } from '@/lib/error-messages'
 
 interface FastCashLoggerProps {
   eventId: string
@@ -39,9 +40,8 @@ export function FastCashLogger({ eventId, onSuccess }: FastCashLoggerProps) {
       await apiFetch(`/v1/events/${eventId}/cash-shagun`, {
         method: 'POST',
         json: {
-          amount_paise: Math.round(parseFloat(amount) * 100),
-          guest_name: name,
-          channel: 'CASH'
+          amount_inr: parseFloat(amount),
+          notes: name,
         }
       })
       
@@ -54,7 +54,7 @@ export function FastCashLogger({ eventId, onSuccess }: FastCashLoggerProps) {
       }, 3000)
     } catch (err: unknown) {
       console.error('Failed to log cash shagun', err)
-      setError('Failed to log entry. Please try again.')
+      setError(getUserFacingError(err, 'Failed to log entry. Please try again.'))
     } finally {
       setIsSubmitting(false)
     }

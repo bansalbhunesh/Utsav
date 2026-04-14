@@ -47,19 +47,15 @@ export default async function GuestEventPage({ params }: EventPageProps) {
   const hostName = event.profiles?.full_name || 'the Hosts'
   const subEvents: PublicSubEvent[] = event.sub_events || []
   const themeColor = event.branding_color || '#EA580C'
+  const coverImage = event.cover_image_url || event.cover_image || null
+  const eventStartDate = event.date_start ?? event.start_date ?? null
 
   return (
     <div className="min-h-screen bg-white" style={{ '--theme-color': themeColor } as CSSProperties}>
-      <style jsx global>{`
-        .bg-theme { background-color: var(--theme-color); }
-        .text-theme { color: var(--theme-color); }
-        .border-theme { border-color: var(--theme-color); }
-        .ring-theme { --tw-ring-color: var(--theme-color); }
-      `}</style>
       <section className="relative h-[60vh] min-h-[500px] w-full flex items-center justify-center overflow-hidden">
-        {(event.cover_image_url || event.cover_image) && (
+        {coverImage && (
           <Image
-            src={event.cover_image_url || event.cover_image}
+            src={coverImage}
             alt="Cover"
             fill
             className="absolute inset-0 object-cover"
@@ -68,7 +64,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
         <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" />
         <div className="relative text-center px-6 space-y-6 max-w-3xl">
           <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md border border-white/20 px-4 py-2 rounded-full text-white text-xs font-bold uppercase tracking-widest animate-in fade-in slide-in-from-top-4 duration-1000">
-            <Sparkles className="h-4 w-4 text-theme/70" />
+            <Sparkles className="h-4 w-4" style={{ color: themeColor, opacity: 0.7 }} />
             Official Invitation
           </div>
           <h1 className="text-4xl sm:text-7xl font-bold text-white tracking-tight animate-in fade-in slide-in-from-bottom-4 duration-1000">
@@ -76,13 +72,11 @@ export default async function GuestEventPage({ params }: EventPageProps) {
           </h1>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 text-white/90 font-medium animate-in fade-in duration-1000 delay-300">
             <div className="flex items-center gap-2">
-              <Calendar className="h-5 w-5 text-theme/70" />
-              {event.date_start || event.start_date
-                ? format(new Date(event.date_start || event.start_date), 'PPP')
-                : 'Date TBD'}
+              <Calendar className="h-5 w-5" style={{ color: themeColor, opacity: 0.7 }} />
+              {eventStartDate ? format(new Date(eventStartDate), 'PPP') : 'Date TBD'}
             </div>
             <div className="flex items-center gap-2">
-              <Heart className="h-5 w-5 text-theme/70" />
+              <Heart className="h-5 w-5" style={{ color: themeColor, opacity: 0.7 }} />
               Hosted by {hostName}
             </div>
           </div>
@@ -94,7 +88,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
               <Button className="w-full h-14 bg-white text-zinc-900 font-bold rounded-2xl shadow-xl">RSVP Now</Button>
             </Link>
             <Link href={`/${params.slug}/shagun`} className="flex-1">
-              <Button className="w-full h-14 bg-theme text-white font-bold rounded-2xl shadow-xl">Gifting</Button>
+              <Button className="w-full h-14 text-white font-bold rounded-2xl shadow-xl" style={{ backgroundColor: themeColor }}>Gifting</Button>
             </Link>
           </div>
         </div>
@@ -113,7 +107,6 @@ export default async function GuestEventPage({ params }: EventPageProps) {
         <section className="text-center space-y-10">
           <h2 className="text-2xl font-bold text-zinc-900">Are you joining us?</h2>
           <RSVPForm
-            eventId={event.id}
             eventTitle={event.title}
             eventSlug={params.slug}
             subEvents={subEvents}
@@ -122,7 +115,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
         <section className="space-y-10">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-zinc-900 flex items-center gap-3">
-              <Clock className="w-8 h-8 text-theme" />
+              <Clock className="w-8 h-8" style={{ color: themeColor }} />
               Event Schedule
             </h2>
             <div className="h-px flex-1 bg-zinc-100 ml-6 hidden sm:block" />
@@ -131,23 +124,27 @@ export default async function GuestEventPage({ params }: EventPageProps) {
           <div className="grid grid-cols-1 gap-6">
             {subEvents.length > 0 ? (
               subEvents.map((sub) => (
+                // Use a safe display fallback when source API omits dates.
+                (() => {
+                  const subDate = sub.date_time ?? sub.starts_at ?? null
+                  return (
                 <div key={sub.id} className="group flex flex-col sm:flex-row gap-6 p-6 rounded-[32px] border border-zinc-100 bg-white hover:border-orange-100 hover:shadow-xl hover:shadow-orange-50/50 transition-all duration-500">
                   <div className="w-full sm:w-48 h-32 sm:h-auto bg-zinc-50 rounded-2xl flex flex-col items-center justify-center text-center p-4">
                      <span className="text-zinc-400 text-[10px] font-bold uppercase tracking-widest mb-1">
-                       {format(new Date(sub.date_time || sub.starts_at), 'EEE')}
+                       {subDate ? format(new Date(subDate), 'EEE') : 'TBD'}
                      </span>
                      <span className="text-2xl font-bold text-zinc-900">
-                       {format(new Date(sub.date_time || sub.starts_at), 'do MMM')}
+                       {subDate ? format(new Date(subDate), 'do MMM') : 'Date TBD'}
                      </span>
                      <span className="text-zinc-500 text-xs mt-1">
-                       {format(new Date(sub.date_time || sub.starts_at), 'p')}
+                       {subDate ? format(new Date(subDate), 'p') : 'Time TBD'}
                      </span>
                   </div>
                   
                   <div className="flex-1 space-y-4">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-[10px] uppercase font-bold text-theme border-orange-100 bg-orange-50/50">
+                        <Badge variant="outline" className="text-[10px] uppercase font-bold border-orange-100 bg-orange-50/50" style={{ color: themeColor }}>
                           {sub.type || 'Main Event'}
                         </Badge>
                         <Heart className="w-3 h-3 text-zinc-200" />
@@ -175,6 +172,8 @@ export default async function GuestEventPage({ params }: EventPageProps) {
                     </div>
                   </div>
                 </div>
+                  )
+                })()
               ))
             ) : (
               <div className="py-12 text-center text-zinc-400 bg-zinc-50 rounded-3xl border border-dashed border-zinc-200">
@@ -195,7 +194,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
           </div>
 
           <div className="max-w-lg mx-auto relative z-10">
-            <RSVPForm eventId={event.id} eventTitle={event.title} eventSlug={params.slug} subEvents={subEvents} />
+            <RSVPForm eventTitle={event.title} eventSlug={params.slug} subEvents={subEvents} />
           </div>
         </section>
 
@@ -216,11 +215,11 @@ export default async function GuestEventPage({ params }: EventPageProps) {
            <Link href={`/${params.slug}/memory-book`} className="group">
               <div className="bg-white border border-zinc-200 rounded-[32px] p-8 space-y-4 hover:border-orange-200 transition-all shadow-sm">
                  <div className="w-12 h-12 bg-orange-100 rounded-2xl flex items-center justify-center text-theme">
-                    <Heart className="w-6 h-6 fill-current" />
+                    <Heart className="w-6 h-6 fill-current" style={{ color: themeColor }} />
                  </div>
                  <h3 className="text-xl font-bold text-zinc-900">Memory Book</h3>
                  <p className="text-zinc-500 text-sm">A digital keepsake of all the blessings and highlights.</p>
-                 <div className="pt-2 flex items-center gap-2 text-xs font-bold text-theme">
+                 <div className="pt-2 flex items-center gap-2 text-xs font-bold" style={{ color: themeColor }}>
                     Open Souvenir <ChevronRight className="w-3 h-3" />
                  </div>
               </div>
@@ -228,7 +227,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
         </section>
 
         <section className="bg-orange-50 rounded-[40px] p-8 sm:p-12 border border-orange-100 flex flex-col sm:flex-row items-center gap-8">
-           <div className="w-20 h-20 bg-theme rounded-2xl flex items-center justify-center text-white shadow-xl shadow-orange-200">
+           <div className="w-20 h-20 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-orange-200" style={{ backgroundColor: themeColor }}>
               <IndianRupee className="w-10 h-10" />
            </div>
            <div className="flex-1 text-center sm:text-left space-y-2">
@@ -236,7 +235,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
               <p className="text-zinc-600">Send your blessings and gifts directly to the hosts via secure UPI payment.</p>
            </div>
            <Link href={`/${params.slug}/shagun`}>
-              <Button className="h-14 px-8 bg-theme hover:bg-orange-700 text-white font-bold rounded-2xl group">
+              <Button className="h-14 px-8 text-white font-bold rounded-2xl group" style={{ backgroundColor: themeColor }}>
                  Open Gifting Box
                  <ChevronRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
               </Button>

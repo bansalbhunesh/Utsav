@@ -19,6 +19,7 @@ export interface PublicEvent {
   id: string
   slug?: string
   title: string
+  event_type?: string
   description?: string
   branding_color?: string
   cover_image?: string

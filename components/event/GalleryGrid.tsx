@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Card } from '@/components/ui/card'
+import Image from 'next/image'
 import { Button } from '@/components/ui/button'
-import { Plus, Image as ImageIcon, Heart, Info, Camera } from 'lucide-react'
+import { Image as ImageIcon, Heart, Info, Camera } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { guestApiFetch } from '@/lib/api'
 
@@ -91,10 +91,13 @@ export function GalleryGrid({ eventSlug }: { eventSlug: string }) {
         <div className="columns-2 md:columns-4 gap-4 space-y-4">
            {filteredMedia.map((m, i) => (
              <div key={m.id || i} className="relative group overflow-hidden rounded-[24px] break-inside-avoid shadow-sm hover:shadow-xl transition-all duration-500">
-                <img 
+                <Image
                   src={m.url} 
                   alt="" 
-                  className="w-full object-cover transition-transform duration-700 group-hover:scale-110" 
+                  width={800}
+                  height={800}
+                  className="w-full object-cover transition-transform duration-700 group-hover:scale-110"
+                  unoptimized
                 />
                 <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
                    <div className="flex items-center justify-between text-white">

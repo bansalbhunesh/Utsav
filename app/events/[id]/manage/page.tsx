@@ -26,12 +26,6 @@ import { useQuery } from '@tanstack/react-query'
 import { getUserFacingError } from '@/lib/error-messages'
 import { parseHostEvent, parseHostShagunResponse } from '@/lib/contracts/host'
 
-interface EventDetails {
-  id: string
-  slug: string
-  title: string
-}
-
 interface ShagunItem {
   id: string
   channel: string
@@ -149,7 +143,7 @@ export default function EventManagePage() {
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
           {/* Left: Logger & Actions */}
           <div className="lg:col-span-2 space-y-6">
-            <FastCashLogger eventId={eventId} onSuccess={fetchData} />
+            <FastCashLogger eventId={eventId} onSuccess={() => { void refetch() }} />
             
             <VendorManager eventId={eventId} />
 

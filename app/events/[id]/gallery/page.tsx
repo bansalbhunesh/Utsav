@@ -5,7 +5,7 @@ import Image from "next/image";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getUserFacingError } from "@/lib/error-messages";
 import {
   parseHostGalleryAssetsResponse,
@@ -28,8 +28,9 @@ export default function EventGalleryPage() {
   const [status, setStatus] = useState<"pending" | "approved" | "rejected" | "all">("pending");
   const [section, setSection] = useState("moments");
   const [busy, setBusy] = useState(false);
+  const queryClient = useQueryClient();
 
-  const { data, error, refetch } = useQuery({
+  const { data, error } = useQuery({
     queryKey: ["event-gallery-assets", id, status],
     queryFn: async () => {
       const q = status === "all" ? "" : `?status=${status}`;
@@ -39,6 +40,34 @@ export default function EventGalleryPage() {
   });
   const assets: Asset[] = data?.assets || [];
   const err = error ? getUserFacingError(error, "Failed to load gallery assets.") : actionErr;
+
+  const registerAssetMutation = useMutation({
+    mutationFn: async (payload: {
+      section: string;
+      object_key: string;
+      mime_type: string;
+      bytes: number;
+      status: "pending";
+    }) =>
+      apiFetch(`/v1/events/${id}/gallery/assets`, {
+        method: "POST",
+        json: payload,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["event-gallery-assets", id] });
+    },
+  });
+
+  const moderateAssetMutation = useMutation({
+    mutationFn: async ({ assetId, next }: { assetId: string; next: "approved" | "rejected" | "pending" }) =>
+      apiFetch(`/v1/events/${id}/gallery/assets/${assetId}`, {
+        method: "PATCH",
+        json: { status: next },
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["event-gallery-assets", id] });
+    },
+  });
 
   async function onUploadFile(file: File) {
     setActionErr(null);
@@ -61,17 +90,13 @@ export default function EventGalleryPage() {
       });
       if (!put.ok) throw new Error(`upload_failed_${put.status}`);
 
-      await apiFetch(`/v1/events/${id}/gallery/assets`, {
-        method: "POST",
-        json: {
-          section,
-          object_key: upload.object_key,
-          mime_type: file.type || "application/octet-stream",
-          bytes: file.size,
-          status: "pending",
-        },
+      await registerAssetMutation.mutateAsync({
+        section,
+        object_key: upload.object_key,
+        mime_type: file.type || "application/octet-stream",
+        bytes: file.size,
+        status: "pending",
       });
-      await refetch();
     } catch (e) {
       setActionErr(getUserFacingError(e, "Failed to upload gallery asset."));
     } finally {
@@ -82,11 +107,7 @@ export default function EventGalleryPage() {
   async function moderate(assetId: string, next: "approved" | "rejected" | "pending") {
     setActionErr(null);
     try {
-      await apiFetch(`/v1/events/${id}/gallery/assets/${assetId}`, {
-        method: "PATCH",
-        json: { status: next },
-      });
-      await refetch();
+      await moderateAssetMutation.mutateAsync({ assetId, next });
     } catch (e) {
       setActionErr(getUserFacingError(e, "Failed to update moderation status."));
     }
