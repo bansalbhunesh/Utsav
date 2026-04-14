@@ -1,137 +1,184 @@
-<<<<<<< HEAD
-import { LoginForm } from "@/components/auth/LoginForm";
-import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
+'use client'
+
+import { useState } from 'react'
+import Link from 'next/link'
+import { ChevronLeft, Loader2, Sparkles, ShieldCheck, Smartphone } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { apiFetch, setTokens } from '@/lib/api'
 
 export default function LoginPage() {
-  return (
-    <div className="min-h-screen flex flex-col bg-zinc-50 lg:bg-white">
-      {/* Header */}
-      <header className="p-6">
-        <Link 
-          href="/" 
-          className="inline-flex items-center text-sm font-medium text-zinc-500 hover:text-orange-600 transition-colors"
-        >
-          <ChevronLeft className="mr-1 h-4 w-4" />
-          Back to Home
-        </Link>
-      </header>
+  const [phone, setPhone] = useState('')
+  const [code, setCode] = useState('')
+  const [step, setStep] = useState<'PHONE' | 'OTP'>('PHONE')
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-      {/* Hero-like layout for login */}
-      <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
-        <div className="w-full max-w-[1000px] grid lg:grid-cols-2 gap-12 items-center">
+  const handleRequestOTP = async () => {
+    if (!phone) return
+    setIsLoading(true)
+    setError(null)
+    try {
+      await apiFetch('/v1/auth/otp/request', { 
+        method: 'POST', 
+        json: { phone } 
+      })
+      setStep('OTP')
+    } catch (err: any) {
+      setError('Failed to send OTP. Is your phone number correct?')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleVerifyOTP = async () => {
+    if (!code) return
+    setIsLoading(true)
+    setError(null)
+    try {
+      const data = await apiFetch<{ access_token: string; refresh_token?: string }>(
+        '/v1/auth/otp/verify',
+        { method: 'POST', json: { phone, code } }
+      )
+      setTokens(data.access_token, data.refresh_token)
+      // Redirect to dashboard
+      window.location.href = '/dashboard'
+    } catch (err: any) {
+      setError('Invalid code. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col lg:flex-row bg-white">
+      {/* Brand Side */}
+      <div className="hidden lg:flex lg:w-1/2 bg-orange-600 p-12 flex-col justify-between text-white relative overflow-hidden">
+        <div className="relative z-10">
+          <Link href="/" className="flex items-center gap-2 mb-12">
+            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-orange-600 font-bold text-2xl">U</div>
+            <span className="text-2xl font-bold tracking-tight">UTSAV</span>
+          </Link>
           
-          {/* Brand/Marketing Side (Hidden on mobile) */}
-          <div className="hidden lg:flex flex-col space-y-8">
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center text-white font-bold text-2xl shadow-lg shadow-orange-200">
-                U
-              </div>
-              <span className="text-2xl font-bold font-heading tracking-tight text-orange-600">
-                UTSAV
-              </span>
-            </div>
-            
-            <div className="space-y-4">
-              <h1 className="text-5xl font-bold font-heading tracking-tight text-zinc-900 leading-tight">
-                Start Managing Your <br />
-                <span className="text-orange-600 italic">Event Excellence</span>
-              </h1>
-              <p className="text-xl text-zinc-600 max-w-md leading-relaxed">
-                Join thousands of hosts and organisers who use Utsav to create 
-                memorable experiences without the stress.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-6 pt-4">
-              <div className="space-y-1">
-                <p className="text-2xl font-bold text-zinc-900 tracking-tight">10M+</p>
-                <p className="text-sm text-zinc-500 font-medium">Annual Weddings</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-2xl font-bold text-zinc-900 tracking-tight">Zero</p>
-                <p className="text-sm text-zinc-500 font-medium">WhatsApp Chaos</p>
-              </div>
-            </div>
+          <div className="space-y-6 max-w-lg">
+             <h1 className="text-6xl font-bold leading-tight tracking-tight">
+               Manage Events with <br />
+               <span className="text-orange-200 italic underline decoration-white/20 underline-offset-8">Precision.</span>
+             </h1>
+             <p className="text-xl text-orange-100 font-medium">
+               The Relational Ledger v1.5 enables secure auth for organisers and hosts.
+             </p>
           </div>
-
-          {/* Login Form Side */}
-          <div className="flex justify-center">
-            <LoginForm />
-          </div>
-
         </div>
-      </main>
 
-      {/* Footer (Simplified) */}
-      <footer className="p-8 text-center border-t border-zinc-100 bg-white lg:bg-zinc-50/50">
-        <p className="text-zinc-500 text-xs font-medium">
-          &copy; 2026 UTSAV Technologies. Handcrafted in India.
-        </p>
-      </footer>
+        <div className="relative z-10 grid grid-cols-2 gap-8">
+           <div className="space-y-2">
+              <ShieldCheck className="w-8 h-8 text-orange-200" />
+              <h3 className="font-bold text-lg">Authoritative API</h3>
+              <p className="text-sm text-orange-100">Every action is verified by our Go-Backend.</p>
+           </div>
+           <div className="space-y-2">
+              <Smartphone className="w-8 h-8 text-orange-200" />
+              <h3 className="font-bold text-lg">Instant OTP</h3>
+              <p className="text-sm text-orange-100">Zero password vulnerability for your guests.</p>
+           </div>
+        </div>
+
+        {/* Decorative Circles */}
+        <div className="absolute top-0 right-0 w-[800px] h-[800px] bg-orange-500 rounded-full -translate-y-1/2 translate-x-1/2 opacity-50" />
+        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-orange-700 rounded-full translate-y-1/2 -translate-x-1/2 opacity-30" />
+      </div>
+
+      {/* Form Side */}
+      <div className="flex-1 flex flex-col p-6 lg:p-12">
+        <header className="flex justify-between items-center mb-12 lg:mb-20">
+          <Link href="/" className="inline-flex items-center text-sm font-bold text-zinc-400 hover:text-orange-600 transition-colors uppercase tracking-widest">
+            <ChevronLeft className="mr-1 h-4 w-4" />
+            Home
+          </Link>
+          <div className="lg:hidden flex items-center gap-2">
+            <div className="w-8 h-8 bg-orange-600 rounded-lg flex items-center justify-center text-white font-bold">U</div>
+            <span className="font-bold tracking-tight text-zinc-900">UTSAV</span>
+          </div>
+        </header>
+
+        <main className="flex-1 flex flex-col justify-center max-w-sm mx-auto w-full space-y-8">
+           <div className="space-y-2">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-orange-50 text-orange-600 rounded-full text-[10px] font-bold uppercase tracking-widest mb-2">
+                <Sparkles className="w-3 h-3" /> Secure Access
+              </div>
+              <h2 className="text-4xl font-bold text-zinc-900 tracking-tight">Step Into Your Event</h2>
+              <p className="text-zinc-500 font-medium">Verify your phone to access your dashboard.</p>
+           </div>
+
+           {error && (
+             <div className="p-4 bg-red-50 border border-red-100 rounded-2xl text-red-600 text-sm font-bold animate-in fade-in zoom-in-95">
+                {error}
+             </div>
+           )}
+
+           <div className="space-y-6">
+              {step === 'PHONE' ? (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest ml-1">Phone Number</label>
+                    <Input 
+                      placeholder="+91 9876543210" 
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      className="h-14 rounded-2xl border-zinc-100 bg-zinc-50 text-lg font-medium focus:ring-orange-600"
+                    />
+                  </div>
+                  <Button 
+                    onClick={handleRequestOTP}
+                    disabled={isLoading || !phone}
+                    className="w-full h-14 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-2xl shadow-xl shadow-orange-100"
+                  >
+                    {isLoading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'Get Verification Code'}
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-4 animate-in slide-in-from-right-4 duration-500">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest ml-1">6-Digit OTP</label>
+                    <Input 
+                      placeholder="000000" 
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      className="h-14 rounded-2xl border-zinc-100 bg-zinc-50 text-center text-3xl font-bold tracking-[0.5em] focus:ring-orange-600"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <Button 
+                      variant="ghost" 
+                      onClick={() => setStep('PHONE')}
+                      className="h-14 rounded-2xl text-zinc-400 font-bold hover:bg-zinc-100"
+                    >
+                      Back
+                    </Button>
+                    <Button 
+                      onClick={handleVerifyOTP}
+                      disabled={isLoading || !code}
+                      className="h-14 bg-zinc-900 hover:bg-black text-white font-bold rounded-2xl shadow-xl"
+                    >
+                      {isLoading ? <Loader2 className="w-6 h-6 animate-spin" /> : 'Verify'}
+                    </Button>
+                  </div>
+                </div>
+              )}
+           </div>
+
+           <p className="text-zinc-400 text-[10px] font-bold uppercase tracking-widest text-center">
+              Authoritative Auth v1.5 · Powered by Go API
+           </p>
+        </main>
+
+        <footer className="mt-auto pt-12 text-center lg:text-left">
+           <p className="text-zinc-300 text-[10px] font-bold uppercase tracking-widest">
+             &copy; 2026 UTSAV Technologies
+           </p>
+        </footer>
+      </div>
     </div>
-=======
-"use client";
-
-import Link from "next/link";
-import { useState } from "react";
-import { apiFetch, setTokens } from "@/lib/api";
-
-export default function LoginPage() {
-  const [phone, setPhone] = useState("+919876543210");
-  const [code, setCode] = useState("123456");
-  const [msg, setMsg] = useState<string | null>(null);
-
-  return (
-    <main className="mx-auto flex max-w-md flex-col gap-4 px-6 py-16">
-      <Link href="/" className="text-sm text-zinc-400 hover:text-white">
-        ← Home
-      </Link>
-      <h1 className="text-2xl font-semibold text-white">Phone login</h1>
-      <p className="text-sm text-zinc-500">Dev OTP defaults to 123456 (`DEV_OTP_CODE` on API).</p>
-      <input
-        className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-white"
-        value={phone}
-        onChange={(e) => setPhone(e.target.value)}
-        placeholder="Phone"
-      />
-      <button
-        type="button"
-        className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black"
-        onClick={() =>
-          void (async () => {
-            setMsg(null);
-            await apiFetch("/v1/auth/otp/request", { method: "POST", json: { phone } });
-            setMsg("OTP sent.");
-          })()
-        }
-      >
-        Request OTP
-      </button>
-      <input
-        className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-white"
-        value={code}
-        onChange={(e) => setCode(e.target.value)}
-      />
-      <button
-        type="button"
-        className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-white"
-        onClick={() =>
-          void (async () => {
-            setMsg(null);
-            const d = await apiFetch<{ access_token: string; refresh_token?: string }>(
-              "/v1/auth/otp/verify",
-              { method: "POST", json: { phone, code } },
-            );
-            setTokens(d.access_token, d.refresh_token);
-            window.location.href = "/dashboard";
-          })()
-        }
-      >
-        Verify
-      </button>
-      {msg && <p className="text-sm text-zinc-400">{msg}</p>}
-    </main>
->>>>>>> f7494df (feat: Architectural Level Up - Go-Authoritative Backend, RSVP OTP Flow, and Frontend Consolidation (v1.5 Final))
-  );
+  )
 }
