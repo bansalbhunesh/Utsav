@@ -14,9 +14,15 @@ const SAMPLE_MODERN_WEDDING = [
   'https://images.unsplash.com/photo-1519225421980-715cb0215aed?auto=format&fit=crop&q=80&w=600',
 ]
 
+interface MediaItem {
+  id: string
+  url: string
+  is_official: boolean
+}
+
 export function GalleryGrid({ eventId }: { eventId: string }) {
   const [activeTab, setActiveTab] = useState<'official' | 'guests'>('official')
-  const [media, setMedia] = useState<any[]>([])
+  const [media, setMedia] = useState<MediaItem[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -26,7 +32,7 @@ export function GalleryGrid({ eventId }: { eventId: string }) {
         .select('*')
         .eq('event_id', eventId)
         .order('created_at', { ascending: false })
-      setMedia(data || [])
+      setMedia((data as MediaItem[]) || [])
       setLoading(false)
     }
     fetchMedia()
@@ -82,7 +88,7 @@ export function GalleryGrid({ eventId }: { eventId: string }) {
            {filteredMedia.map((m, i) => (
              <div key={m.id || i} className="relative group overflow-hidden rounded-[24px] break-inside-avoid shadow-sm hover:shadow-xl transition-all duration-500">
                 <img 
-                  src={m.url || m} 
+                  src={m.url} 
                   alt="" 
                   className="w-full object-cover transition-transform duration-700 group-hover:scale-110" 
                 />
@@ -104,9 +110,9 @@ export function GalleryGrid({ eventId }: { eventId: string }) {
 
       <div className="flex items-start gap-4 p-6 bg-orange-50 border border-orange-100 rounded-3xl">
          <Info className="h-5 w-5 text-orange-600 mt-0.5 shrink-0" />
-         <p className="text-sm text-orange-800 leading-relaxed">
-            <strong>v1.5 Moderation</strong>: Guest photos are automatically scanned for safety. Only the host can delete or "Pin" photos to the official highlight reel.
-         </p>
+         <div className="text-sm text-orange-800 leading-relaxed">
+            <strong>v1.5 Moderation</strong>: Guest photos are automatically scanned for safety. Only the host can delete or &quot;Pin&quot; photos to the official highlight reel.
+         </div>
       </div>
     </div>
   )

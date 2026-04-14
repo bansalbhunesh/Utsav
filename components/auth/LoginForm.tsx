@@ -130,8 +130,9 @@ export function LoginForm() {
       </form>
       
       <p className="text-xs text-center text-zinc-400 px-6">
-        By continuing, you agree to Utsav's Terms of Service and Privacy Policy.
+        By continuing, you agree to Utsav&apos;s Terms of Service and Privacy Policy.
       </p>
+
     </div>
   )
 }

@@ -1,20 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
 import { apiFetch, getAccessToken } from "@/lib/api";
 
 export default function CashLoggerPage() {
+  const router = useRouter();
   const { id } = useParams();
   const eventId = String(id || "");
   const [guestPhone, setGuestPhone] = useState("");
   const [amount, setAmount] = useState("5000");
   const [msg, setMsg] = useState<string | null>(null);
 
-  if (typeof window !== "undefined" && !getAccessToken()) {
-    window.location.href = "/login";
-  }
+  useEffect(() => {
+    if (typeof window !== "undefined" && !getAccessToken()) {
+      router.push("/login");
+    }
+  }, [router]);
 
   async function logCash() {
     setMsg(null);
@@ -23,7 +26,7 @@ export default function CashLoggerPage() {
         method: "POST",
         json: { guest_phone: guestPhone, amount_inr: Number(amount) },
       });
-      setMsg("Logged.");
+      setMsg("Logged successfully.");
       setGuestPhone("");
     } catch (e) {
       setMsg(String(e));
@@ -32,31 +35,39 @@ export default function CashLoggerPage() {
 
   return (
     <main className="mx-auto max-w-md space-y-6 px-4 py-8">
-      <Link href={`/events/${eventId}`} className="text-sm text-zinc-400">
-        ← Event
+      <Link href={`/events/${eventId}`} className="text-sm font-medium text-zinc-400 hover:text-amber-500 transition-colors">
+        ← Back to Event
       </Link>
-      <h1 className="text-2xl font-semibold text-white">Fast cash logger</h1>
-      <input
-        className="w-full rounded-xl border-2 border-zinc-700 bg-zinc-900 px-4 py-4 text-2xl text-white"
-        placeholder="Guest phone"
-        inputMode="tel"
-        value={guestPhone}
-        onChange={(e) => setGuestPhone(e.target.value)}
-      />
-      <input
-        className="w-full rounded-xl border-2 border-zinc-700 bg-zinc-900 px-4 py-4 text-3xl font-bold text-amber-400"
-        inputMode="decimal"
-        value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-      />
+      <h1 className="text-2xl font-bold text-white tracking-tight">Fast Cash Logger</h1>
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Guest Phone</label>
+          <input
+            className="w-full rounded-xl border-2 border-zinc-800 bg-zinc-900 px-4 py-4 text-2xl text-white outline-none focus:border-amber-500 transition-all"
+            placeholder="9876543210"
+            inputMode="tel"
+            value={guestPhone}
+            onChange={(e) => setGuestPhone(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Amount (₹)</label>
+          <input
+            className="w-full rounded-xl border-2 border-zinc-800 bg-zinc-900 px-4 py-4 text-3xl font-bold text-amber-400 outline-none focus:border-amber-500 transition-all"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+          />
+        </div>
+      </div>
       <button
         type="button"
         onClick={() => void logCash()}
-        className="w-full rounded-xl bg-amber-500 py-5 text-xl font-semibold text-black active:scale-[0.99]"
+        className="w-full rounded-xl bg-amber-500 py-5 text-xl font-bold text-black active:scale-[0.98] transition-transform shadow-lg shadow-amber-900/20"
       >
-        Log cash shagun
+        Log Cash Entry
       </button>
-      {msg && <p className="text-center text-sm text-zinc-400">{msg}</p>}
+      {msg && <p className="text-center text-sm font-medium text-zinc-400 animate-in fade-in transition-all">{msg}</p>}
     </main>
   );
 }

@@ -1,12 +1,20 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { cn } from '@/lib/utils'
+
+interface ConfettiPiece {
+  id: number
+  left: number
+  delay: number
+  scale: number
+  color: string
+}
 
 export function Confetti() {
-  const [pieces, setPieces] = useState<any[]>([])
+  const [pieces, setPieces] = useState<ConfettiPiece[]>([])
 
   useEffect(() => {
+    // Generate pieces after mount to avoid SSR mismatch with Math.random()
     const p = Array.from({ length: 50 }).map((_, i) => ({
       id: i,
       left: Math.random() * 100,
@@ -16,6 +24,8 @@ export function Confetti() {
     }))
     setPieces(p)
   }, [])
+
+  if (pieces.length === 0) return null
 
   return (
     <div className="fixed inset-0 pointer-events-none z-[100] overflow-hidden">
@@ -28,7 +38,7 @@ export function Confetti() {
             backgroundColor: p.color,
             animationDelay: `${p.delay}s`,
             transform: `scale(${p.scale})`,
-          } as any}
+          } as React.CSSProperties}
         />
       ))}
       <style jsx global>{`

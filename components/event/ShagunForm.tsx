@@ -10,6 +10,8 @@ import { Sparkles, Check, Send, Heart, Info } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Event } from '@/types'
 import { supabase } from '@/lib/supabase/client'
+import { Confetti } from '@/components/ui/Confetti'
+
 
 interface ShagunFormProps {
   event: Event

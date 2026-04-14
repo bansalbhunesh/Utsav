@@ -1,9 +1,18 @@
-import { supabase } from '@/lib/supabase/client'
 import { notFound } from 'next/navigation'
 import { ShagunForm } from '@/components/event/ShagunForm'
 import { Heart } from 'lucide-react'
+import { guestApiFetch } from '@/lib/api'
+import { Event } from '@/types'
 
-// (Rest of the code I wrote for ShagunPage, updated for the new structure)
+interface Profile {
+  full_name: string
+}
+
+interface ShagunEvent extends Event {
+  profiles?: Profile
+  cover_image?: string
+}
+
 interface ShagunPageProps {
   params: {
     slug: string
@@ -11,23 +20,20 @@ interface ShagunPageProps {
 }
 
 async function getEventBySlug(slug: string) {
-  const { data, error } = await supabase
-    .from('events')
-    .select('*, profiles(full_name)')
-    .eq('slug', slug)
-    .single()
-
-  if (error || !data) {
+  try {
+    const data = await guestApiFetch<{ event: ShagunEvent }>(`/v1/public/events/${slug}`)
+    return data.event
+  } catch (err) {
+    console.error('Failed to resolve event for shagun:', err)
     return null
   }
-
-  return data
 }
 
 export default async function ShagunPage({ params }: ShagunPageProps) {
   const event = await getEventBySlug(params.slug)
   if (!event) notFound()
-  const hostName = (event.profiles as any)?.full_name || 'the Host'
+  
+  const hostName = event.profiles?.full_name || 'the Host'
 
   return (
     <main className="min-h-screen bg-[#FAFAFA] pb-20">
@@ -55,11 +61,11 @@ export default async function ShagunPage({ params }: ShagunPageProps) {
         <div className="bg-white rounded-[32px] p-6 sm:p-10 shadow-xl shadow-zinc-200/50 border border-zinc-100">
           <div className="text-center mb-10 space-y-2">
             <h2 className="text-2xl font-bold text-zinc-900">Send Your Blessings</h2>
-            <p className="text-zinc-500">
+            <p className="text-zinc-500 font-medium">
               Your shagun will be sent directly to <span className="font-bold text-zinc-800">{hostName}</span> via UPI.
             </p>
           </div>
-          <ShagunForm event={event as any} hostName={hostName} />
+          <ShagunForm event={event} hostName={hostName} />
         </div>
       </div>
     </main>

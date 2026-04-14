@@ -33,7 +33,10 @@ export const getGuestToken = (): string | null => {
 }
 
 // --- Authorized API Fetcher (Host) ---
-export async function apiFetch<T>(endpoint: string, options: RequestInit & { json?: any } = {}): Promise<T> {
+export async function apiFetch<T>(
+  endpoint: string, 
+  options: RequestInit & { json?: Record<string, unknown> | unknown } = {}
+): Promise<T> {
   const headers = new Headers(options.headers)
   const token = getAccessToken()
   
@@ -52,7 +55,7 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit & { jso
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown API error' }))
+    const error = (await response.json().catch(() => ({ error: 'Unknown API error' }))) as { error?: string }
     throw new Error(error.error || `HTTP ${response.status}`)
   }
 
@@ -60,7 +63,10 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit & { jso
 }
 
 // --- Guest API Fetcher (RSVP/OTP) ---
-export async function guestApiFetch<T>(endpoint: string, options: RequestInit & { json?: any } = {}): Promise<T> {
+export async function guestApiFetch<T>(
+  endpoint: string, 
+  options: RequestInit & { json?: Record<string, unknown> | unknown } = {}
+): Promise<T> {
   const headers = new Headers(options.headers)
   const token = getGuestToken()
   
@@ -79,7 +85,7 @@ export async function guestApiFetch<T>(endpoint: string, options: RequestInit & 
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown API error' }))
+    const error = (await response.json().catch(() => ({ error: 'Unknown API error' }))) as { error?: string }
     throw new Error(error.error || `HTTP ${response.status}`)
   }
 

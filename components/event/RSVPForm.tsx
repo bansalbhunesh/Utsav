@@ -22,11 +22,19 @@ import { cn } from '@/lib/utils'
 import { Confetti } from '@/components/ui/Confetti'
 import { format } from 'date-fns'
 
+interface SubEvent {
+  id: string
+  name: string
+  sub_type?: string
+  starts_at?: string
+  date_time?: string
+}
+
 interface RSVPFormProps {
   eventId: string
   eventTitle: string
   eventSlug: string
-  subEvents: any[]
+  subEvents: SubEvent[]
 }
 
 type RSVPStep = 'IDENTITY' | 'VERIFY' | 'DETAILS' | 'SUCCESS'
@@ -232,7 +240,7 @@ export function RSVPForm({ eventId, eventTitle, eventSlug, subEvents = [] }: RSV
                       <div className="space-y-1">
                         <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
                           <Calendar className="w-3 h-3" />
-                          {format(new Date(sub.starts_at || sub.date_time), 'do MMM')} · {format(new Date(sub.starts_at || sub.date_time), 'p')}
+                          {format(new Date(sub.starts_at || sub.date_time || new Date()), 'do MMM')} · {format(new Date(sub.starts_at || sub.date_time || new Date()), 'p')}
                         </div>
                         <h4 className="font-bold text-white">{sub.name}</h4>
                       </div>
@@ -251,7 +259,7 @@ export function RSVPForm({ eventId, eventTitle, eventSlug, subEvents = [] }: RSV
                              : "border-zinc-700 bg-zinc-900/50 text-zinc-500 hover:border-zinc-600"
                          )}
                        >
-                         <Check className="w-4 h-4" /> I'm Joining
+                         <Check className="w-4 h-4" /> I&apos;m Joining
                        </button>
                        <button 
                          onClick={() => toggleSubEvent(sub.id, 'DECLINED')}

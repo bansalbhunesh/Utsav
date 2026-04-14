@@ -3,6 +3,17 @@ import { notFound } from 'next/navigation'
 import { Heart, Sparkles, Image as ImageIcon, IndianRupee, MessageCircle } from 'lucide-react'
 import { paymentService } from '@/lib/services/PaymentService'
 
+interface ShagunEntry {
+  id: string
+  amount: number
+  message?: string
+  sender_name: string
+}
+
+interface EventMedia {
+  id: string
+}
+
 interface MemoryBookProps {
   params: {
     slug: string
@@ -22,7 +33,7 @@ export default async function MemoryBookPage({ params }: MemoryBookProps) {
   const event = await getStats(params.slug)
   if (!event) notFound()
 
-  const totalShagun = event.shagun?.reduce((acc: number, curr: any) => acc + Number(curr.amount), 0) || 0
+  const totalShagun = (event.shagun as ShagunEntry[])?.reduce((acc: number, curr: ShagunEntry) => acc + Number(curr.amount), 0) || 0
   const totalWishes = event.shagun?.length || 0
   const totalPhotos = event.event_media?.length || 0
 
@@ -37,7 +48,7 @@ export default async function MemoryBookPage({ params }: MemoryBookProps) {
            Official Memory Book
         </div>
         
-        <h1 className="text-4xl sm:text-7xl font-bold font-heading text-zinc-900 tracking-tighter px-4">
+        <h1 className="text-4xl sm:text-7xl font-bold font-heading text-zinc-900 tracking-tighter px-4 text-balance">
           A Celebration for <br />
           <span className="italic text-orange-600">the Ages</span>
         </h1>
@@ -87,17 +98,17 @@ export default async function MemoryBookPage({ params }: MemoryBookProps) {
            </div>
 
            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {event.shagun?.filter((s: any) => s.message).slice(0, 10).map((shagun: any) => (
+              {(event.shagun as ShagunEntry[])?.filter((s) => s.message).slice(0, 10).map((shagun) => (
                 <div key={shagun.id} className="p-8 rounded-[32px] bg-white border border-zinc-100 shadow-sm relative overflow-hidden group hover:border-orange-200 transition-colors">
                    <div className="absolute -top-4 -right-4 opacity-5 group-hover:opacity-10 transition-opacity">
                       <Heart className="w-24 h-24 text-orange-600" />
                    </div>
-                   <p className="text-lg text-zinc-700 font-serif leading-relaxed line-clamp-4 relative z-10">
-                     "{shagun.message}"
+                   <p className="text-lg text-zinc-700 font-serif leading-relaxed line-clamp-4 relative z-10 italic">
+                     &quot;{shagun.message}&quot;
                    </p>
                    <div className="mt-6 flex items-center gap-3 relative z-10">
                       <div className="w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center text-orange-700 text-[10px] font-bold">
-                         {shagun.sender_name.charAt(0)}
+                         {shagun.sender_name?.charAt(0) || 'G'}
                       </div>
                       <p className="text-sm font-bold text-zinc-900">{shagun.sender_name}</p>
                    </div>
@@ -110,7 +121,7 @@ export default async function MemoryBookPage({ params }: MemoryBookProps) {
         <div className="rounded-[48px] bg-zinc-100 aspect-video flex flex-col items-center justify-center text-center space-y-4 px-10 relative overflow-hidden border-8 border-white shadow-2xl">
            <Sparkles className="w-12 h-12 text-orange-400 animate-pulse" />
            <p className="text-2xl font-bold font-heading text-zinc-400 uppercase tracking-widest">Official Film Launching Soon</p>
-           <p className="text-sm text-zinc-400 max-w-sm">
+           <p className="text-sm text-zinc-400 max-w-sm font-medium">
              The full event highlights and official video will be uploaded here by the vendors.
            </p>
         </div>
