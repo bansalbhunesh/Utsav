@@ -1,0 +1,9 @@
+node_modules
+.next
+dist
+.turbo
+*.exe
+services/api/bin/
+*.test
+.env
+.DS_Store
