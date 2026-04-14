@@ -2,8 +2,9 @@ package httpserver
 
 import (
 	"net/http"
+
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
+	"github.com/bhune/utsav/services/api/internal/repository/vendorrepo"
 )
 
 type createVendorBody struct {
@@ -21,28 +22,16 @@ func (s *Server) listVendors(c *gin.Context) {
 	if !ok {
 		return
 	}
-	ctx := c.Request.Context()
-	rows, err := s.Pool.Query(ctx, `
-		SELECT id, name, category, phone, email, advance_paise, total_paise, notes, created_at
-		FROM event_vendors WHERE event_id=$1 ORDER BY created_at DESC`, eventID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "query_failed"})
+	if s.VendorService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "VENDOR_SERVICE_UNAVAILABLE", "Vendor service unavailable.")
 		return
 	}
-	defer rows.Close()
-	list := []gin.H{}
-	for rows.Next() {
-		var id uuid.UUID
-		var name, cat, phone, email, notes string
-		var adv, tot int64
-		var created any
-		_ = rows.Scan(&id, &name, &cat, &phone, &email, &adv, &tot, &notes, &created)
-		list = append(list, gin.H{
-			"id": id.String(), "name": name, "category": cat, "phone": phone,
-			"email": email, "advance_paise": adv, "total_paise": tot, "notes": notes,
-		})
+	rows, svcErr := s.VendorService.ListVendors(c.Request.Context(), eventID)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{"vendors": list})
+	c.JSON(http.StatusOK, gin.H{"vendors": rows})
 }
 
 func (s *Server) postVendor(c *gin.Context) {
@@ -52,22 +41,27 @@ func (s *Server) postVendor(c *gin.Context) {
 	}
 	var body createVendorBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Vendor payload is invalid.")
 		return
 	}
-	ctx := c.Request.Context()
-	var vid uuid.UUID
-	err := s.Pool.QueryRow(ctx, `
-		INSERT INTO event_vendors (event_id, name, category, phone, email, advance_paise, total_paise, notes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-		RETURNING id`,
-		eventID, body.Name, body.Category, body.Phone, body.Email, body.AdvancePaise, body.TotalPaise, body.Notes,
-	).Scan(&vid)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "insert_failed"})
+	if s.VendorService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "VENDOR_SERVICE_UNAVAILABLE", "Vendor service unavailable.")
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"id": vid.String()})
+	id, svcErr := s.VendorService.CreateVendor(c.Request.Context(), eventID, vendorrepo.CreateInput{
+		Name:         body.Name,
+		Category:     body.Category,
+		Phone:        body.Phone,
+		Email:        body.Email,
+		AdvancePaise: body.AdvancePaise,
+		TotalPaise:   body.TotalPaise,
+		Notes:        body.Notes,
+	})
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"id": id})
 }
 
 func (s *Server) deleteVendor(c *gin.Context) {
@@ -75,15 +69,12 @@ func (s *Server) deleteVendor(c *gin.Context) {
 	if !ok {
 		return
 	}
-	vid, err := uuid.Parse(c.Param("vendorId"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_id"})
+	if s.VendorService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "VENDOR_SERVICE_UNAVAILABLE", "Vendor service unavailable.")
 		return
 	}
-	ctx := c.Request.Context()
-	_, err = s.Pool.Exec(ctx, `DELETE FROM event_vendors WHERE id=$1 AND event_id=$2`, vid, eventID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete_failed"})
+	if svcErr := s.VendorService.DeleteVendor(c.Request.Context(), eventID, c.Param("vendorId")); svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})

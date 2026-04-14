@@ -33,9 +33,3 @@ func TestVerifyRazorpayWebhookSignature(t *testing.T) {
 	}
 }
 
-func TestSanitizeFileName(t *testing.T) {
-	got := sanitizeFileName("../Hi There\\image.jpg")
-	if got != "hi-thereimage.jpg" {
-		t.Fatalf("unexpected sanitized value: %q", got)
-	}
-}

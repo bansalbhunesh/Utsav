@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
@@ -9,12 +8,14 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/bhune/utsav/services/api/internal/media"
+	"github.com/bhune/utsav/services/api/internal/repository/broadcastrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/galleryrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/organiserrepo"
+	billingservice "github.com/bhune/utsav/services/api/internal/service/billing"
 )
 
 type galleryAssetBody struct {
@@ -37,41 +38,30 @@ type galleryModerateBody struct {
 	Status string `json:"status" binding:"required"`
 }
 
-func sanitizeFileName(name string) string {
-	s := strings.ToLower(strings.TrimSpace(name))
-	repl := strings.NewReplacer(" ", "-", "..", "", "\\", "", "/", "", ":", "", ";", "")
-	s = repl.Replace(s)
-	if s == "" {
-		return "asset"
-	}
-	return s
-}
-
 func (s *Server) postGalleryPresign(c *gin.Context) {
 	_, eventID, role, ok := s.requireEventAccess(c)
 	if !ok {
 		return
 	}
 	if !roleCanManageEventData(role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to manage gallery.")
+		return
+	}
+	if s.GalleryService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "GALLERY_SERVICE_UNAVAILABLE", "Gallery service unavailable.")
 		return
 	}
 	var body galleryPresignBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Gallery presign payload is invalid.")
 		return
 	}
-	key := fmt.Sprintf("events/%s/gallery/%d-%s", eventID.String(), time.Now().Unix(), sanitizeFileName(body.FileName))
-	resp, err := s.MediaSigner.PresignPut(media.PresignRequest{
-		ObjectKey:   key,
-		ContentType: body.ContentType,
-		ExpiresIn:   10 * time.Minute,
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "presign_failed"})
+	upload, svcErr := s.GalleryService.PresignPut(eventID, body.FileName, body.ContentType)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"upload": resp})
+	c.JSON(http.StatusOK, gin.H{"upload": upload})
 }
 
 func (s *Server) postGalleryAsset(c *gin.Context) {
@@ -80,35 +70,29 @@ func (s *Server) postGalleryAsset(c *gin.Context) {
 		return
 	}
 	if !roleCanManageEventData(role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to manage gallery.")
+		return
+	}
+	if s.GalleryService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "GALLERY_SERVICE_UNAVAILABLE", "Gallery service unavailable.")
 		return
 	}
 	var body galleryAssetBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Gallery asset payload is invalid.")
 		return
 	}
-	var sid any
-	if body.SubEventID != "" {
-		if u, err := uuid.Parse(body.SubEventID); err == nil {
-			sid = u
-		}
-	}
-	ctx := c.Request.Context()
-	status := strings.TrimSpace(strings.ToLower(body.Status))
-	if status == "" {
-		status = "pending"
-	}
-	if status != "pending" && status != "approved" && status != "rejected" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_status"})
-		return
-	}
-	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO gallery_assets (event_id, section, object_key, uploader_user_id, sub_event_id, status, mime_type, bytes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		eventID, body.Section, body.ObjectKey, uid, sid, status, nullString(body.MimeType), body.Bytes)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "insert_failed"})
+	if svcErr := s.GalleryService.CreateAsset(c.Request.Context(), galleryrepo.CreateAssetInput{
+		EventID:        eventID,
+		UploaderUserID: uid,
+		Section:        body.Section,
+		ObjectKey:      body.ObjectKey,
+		SubEventID:     body.SubEventID,
+		Status:         body.Status,
+		MimeType:       body.MimeType,
+		Bytes:          body.Bytes,
+	}); svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"ok": true})
@@ -120,42 +104,19 @@ func (s *Server) listGalleryAssets(c *gin.Context) {
 		return
 	}
 	if !roleCanManageEventData(role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to manage gallery.")
 		return
 	}
-	status := strings.TrimSpace(strings.ToLower(c.Query("status")))
-	ctx := c.Request.Context()
-	q := `
-		SELECT id, section, object_key, status, mime_type, bytes, created_at
-		FROM gallery_assets
-		WHERE event_id=$1`
-	args := []any{eventID}
-	if status != "" {
-		q += ` AND status=$2`
-		args = append(args, status)
-	}
-	q += ` ORDER BY created_at DESC LIMIT 200`
-	rows, err := s.Pool.Query(ctx, q, args...)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "query_failed"})
+	if s.GalleryService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "GALLERY_SERVICE_UNAVAILABLE", "Gallery service unavailable.")
 		return
 	}
-	defer rows.Close()
-	out := []gin.H{}
-	for rows.Next() {
-		var id uuid.UUID
-		var sec, key, st string
-		var mt any
-		var bytes any
-		var created any
-		_ = rows.Scan(&id, &sec, &key, &st, &mt, &bytes, &created)
-		out = append(out, gin.H{
-			"id": id.String(), "section": sec, "object_key": key, "status": st,
-			"mime_type": mt, "bytes": bytes, "created_at": created,
-			"url": s.MediaSigner.PublicObjectURL(key),
-		})
+	assets, svcErr := s.GalleryService.ListAssets(c.Request.Context(), eventID, c.Query("status"))
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{"assets": out})
+	c.JSON(http.StatusOK, gin.H{"assets": assets})
 }
 
 func (s *Server) patchGalleryAssetModeration(c *gin.Context) {
@@ -164,34 +125,25 @@ func (s *Server) patchGalleryAssetModeration(c *gin.Context) {
 		return
 	}
 	if !roleCanManageEventData(role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to moderate gallery.")
 		return
 	}
 	aid, err := uuid.Parse(c.Param("assetId"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_asset_id"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_ASSET_ID", "Asset id is invalid.")
+		return
+	}
+	if s.GalleryService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "GALLERY_SERVICE_UNAVAILABLE", "Gallery service unavailable.")
 		return
 	}
 	var body galleryModerateBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Gallery moderation payload is invalid.")
 		return
 	}
-	status := strings.TrimSpace(strings.ToLower(body.Status))
-	if status != "approved" && status != "rejected" && status != "pending" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_status"})
-		return
-	}
-	ctx := c.Request.Context()
-	tag, err := s.Pool.Exec(ctx, `
-		UPDATE gallery_assets SET status=$1
-		WHERE id=$2 AND event_id=$3`, status, aid, eventID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "update_failed"})
-		return
-	}
-	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+	if svcErr := s.GalleryService.ModerateAsset(c.Request.Context(), eventID, aid, body.Status); svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -211,32 +163,17 @@ func (s *Server) listBroadcastsHost(c *gin.Context) {
 		return
 	}
 	if !roleCanManageEventData(role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to manage broadcasts.")
 		return
 	}
-	ctx := c.Request.Context()
-	rows, err := s.Pool.Query(ctx, `
-		SELECT id, title, body, image_url, audience, announcement_type, created_at
-		FROM broadcasts
-		WHERE event_id=$1
-		ORDER BY created_at DESC`, eventID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "query_failed"})
+	if s.BroadcastService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "BROADCAST_SERVICE_UNAVAILABLE", "Broadcast service unavailable.")
 		return
 	}
-	defer rows.Close()
-	out := []gin.H{}
-	for rows.Next() {
-		var id uuid.UUID
-		var title, body, atype string
-		var img any
-		var audience []byte
-		var created any
-		_ = rows.Scan(&id, &title, &body, &img, &audience, &atype, &created)
-		out = append(out, gin.H{
-			"id": id.String(), "title": title, "body": body, "image_url": img,
-			"audience": string(audience), "announcement_type": atype, "created_at": created,
-		})
+	out, svcErr := s.BroadcastService.List(c.Request.Context(), eventID)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"broadcasts": out})
 }
@@ -247,34 +184,31 @@ func (s *Server) postBroadcast(c *gin.Context) {
 		return
 	}
 	if !roleCanManageFinancials(role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to create broadcasts.")
+		return
+	}
+	if s.BroadcastService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "BROADCAST_SERVICE_UNAVAILABLE", "Broadcast service unavailable.")
 		return
 	}
 	var body broadcastBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Broadcast payload is invalid.")
 		return
 	}
-	if body.Type == "" {
-		body.Type = "general"
-	}
-	ctx := c.Request.Context()
-	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO broadcasts (event_id, title, body, image_url, audience, announcement_type, created_by_user_id)
-		VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)`,
-		eventID, body.Title, body.Body, nullString(body.ImageURL), mustJSONB(body.Audience), body.Type, uid)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "insert_failed", "detail": err.Error()})
+	if svcErr := s.BroadcastService.Create(c.Request.Context(), broadcastrepo.CreateInput{
+		EventID:         eventID,
+		CreatedByUserID: uid,
+		Title:           body.Title,
+		Body:            body.Body,
+		ImageURL:        body.ImageURL,
+		Audience:        body.Audience,
+		Type:            body.Type,
+	}); svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"ok": true})
-}
-
-func nullString(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 type organiserProfileBody struct {
@@ -288,19 +222,17 @@ func (s *Server) postOrganiserProfile(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var body organiserProfileBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+	if s.OrganiserService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "ORGANISER_SERVICE_UNAVAILABLE", "Organiser service unavailable.")
 		return
 	}
-	ctx := c.Request.Context()
-	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO organiser_profiles (user_id, company_name, description, logo_url)
-		VALUES ($1,$2,$3,$4)
-		ON CONFLICT (user_id) DO UPDATE SET company_name=EXCLUDED.company_name, description=EXCLUDED.description, logo_url=EXCLUDED.logo_url`,
-		uid, body.CompanyName, body.Description, nullString(body.LogoURL))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "upsert_failed", "detail": err.Error()})
+	var body organiserProfileBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Organiser profile payload is invalid.")
+		return
+	}
+	if svcErr := s.OrganiserService.UpsertProfile(c.Request.Context(), uid, body.CompanyName, body.Description, body.LogoURL); svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -311,17 +243,16 @@ func (s *Server) getOrganiserMe(c *gin.Context) {
 	if !ok {
 		return
 	}
-	ctx := c.Request.Context()
-	row := s.Pool.QueryRow(ctx, `
-		SELECT id, company_name, description, logo_url, verified FROM organiser_profiles WHERE user_id=$1`, uid)
-	var id uuid.UUID
-	var name, desc, logo string
-	var verified bool
-	if err := row.Scan(&id, &name, &desc, &logo, &verified); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no_profile"})
+	if s.OrganiserService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "ORGANISER_SERVICE_UNAVAILABLE", "Organiser service unavailable.")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"id": id.String(), "company_name": name, "description": desc, "logo_url": logo, "verified": verified})
+	profile, svcErr := s.OrganiserService.GetMe(c.Request.Context(), uid)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+		return
+	}
+	c.JSON(http.StatusOK, profile)
 }
 
 func (s *Server) getOrganiserEvents(c *gin.Context) {
@@ -329,38 +260,16 @@ func (s *Server) getOrganiserEvents(c *gin.Context) {
 	if !ok {
 		return
 	}
-	ctx := c.Request.Context()
-	var oid uuid.UUID
-	if err := s.Pool.QueryRow(ctx, `SELECT id FROM organiser_profiles WHERE user_id=$1`, uid).Scan(&oid); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no_profile"})
+	if s.OrganiserService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "ORGANISER_SERVICE_UNAVAILABLE", "Organiser service unavailable.")
 		return
 	}
-	rows, err := s.Pool.Query(ctx, `
-		SELECT e.id, e.slug, e.title, e.date_start
-		FROM events e
-		JOIN organiser_client_events oce ON oce.event_id=e.id
-		JOIN organiser_clients oc ON oc.id=oce.organiser_client_id
-		WHERE oc.organiser_id=$1`, oid)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "query_failed"})
+	events, svcErr := s.OrganiserService.ListEvents(c.Request.Context(), uid)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	defer rows.Close()
-	out := []gin.H{}
-	for rows.Next() {
-		var id uuid.UUID
-		var slug, title string
-		var ds any
-		_ = rows.Scan(&id, &slug, &title, &ds)
-		out = append(out, gin.H{"id": id.String(), "slug": slug, "title": title, "date_start": ds})
-	}
-	c.JSON(http.StatusOK, gin.H{"events": out})
-}
-
-func (s *Server) organiserIDByUser(ctx context.Context, uid uuid.UUID) (uuid.UUID, error) {
-	var oid uuid.UUID
-	err := s.Pool.QueryRow(ctx, `SELECT id FROM organiser_profiles WHERE user_id=$1`, uid).Scan(&oid)
-	return oid, err
+	c.JSON(http.StatusOK, gin.H{"events": events})
 }
 
 type organiserClientBody struct {
@@ -375,34 +284,16 @@ func (s *Server) listOrganiserClients(c *gin.Context) {
 	if !ok {
 		return
 	}
-	ctx := c.Request.Context()
-	oid, err := s.organiserIDByUser(ctx, uid)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no_profile"})
+	if s.OrganiserService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "ORGANISER_SERVICE_UNAVAILABLE", "Organiser service unavailable.")
 		return
 	}
-	rows, err := s.Pool.Query(ctx, `
-		SELECT id, name, contact_email, contact_phone, notes, created_at
-		FROM organiser_clients
-		WHERE organiser_id=$1
-		ORDER BY created_at DESC`, oid)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "query_failed"})
+	clients, svcErr := s.OrganiserService.ListClients(c.Request.Context(), uid)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	defer rows.Close()
-	out := []gin.H{}
-	for rows.Next() {
-		var id uuid.UUID
-		var name string
-		var email, phone, notes, created any
-		_ = rows.Scan(&id, &name, &email, &phone, &notes, &created)
-		out = append(out, gin.H{
-			"id": id.String(), "name": name, "contact_email": email,
-			"contact_phone": phone, "notes": notes, "created_at": created,
-		})
-	}
-	c.JSON(http.StatusOK, gin.H{"clients": out})
+	c.JSON(http.StatusOK, gin.H{"clients": clients})
 }
 
 func (s *Server) postOrganiserClient(c *gin.Context) {
@@ -410,28 +301,26 @@ func (s *Server) postOrganiserClient(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if s.OrganiserService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "ORGANISER_SERVICE_UNAVAILABLE", "Organiser service unavailable.")
+		return
+	}
 	var body organiserClientBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Organiser client payload is invalid.")
 		return
 	}
-	ctx := c.Request.Context()
-	oid, err := s.organiserIDByUser(ctx, uid)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no_profile"})
+	id, svcErr := s.OrganiserService.CreateClient(c.Request.Context(), uid, organiserrepo.ClientInput{
+		Name:         body.Name,
+		ContactEmail: body.ContactEmail,
+		ContactPhone: body.ContactPhone,
+		Notes:        body.Notes,
+	})
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	var id uuid.UUID
-	err = s.Pool.QueryRow(ctx, `
-		INSERT INTO organiser_clients (organiser_id, name, contact_email, contact_phone, notes)
-		VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-		oid, body.Name, nullString(body.ContactEmail), nullString(body.ContactPhone), nullString(body.Notes)).
-		Scan(&id)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "create_failed"})
-		return
-	}
-	c.JSON(http.StatusCreated, gin.H{"id": id.String()})
+	c.JSON(http.StatusCreated, gin.H{"id": id})
 }
 
 func (s *Server) patchOrganiserClient(c *gin.Context) {
@@ -441,31 +330,25 @@ func (s *Server) patchOrganiserClient(c *gin.Context) {
 	}
 	cid, err := uuid.Parse(c.Param("clientId"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_client_id"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_CLIENT_ID", "Client id is invalid.")
+		return
+	}
+	if s.OrganiserService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "ORGANISER_SERVICE_UNAVAILABLE", "Organiser service unavailable.")
 		return
 	}
 	var body organiserClientBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Organiser client payload is invalid.")
 		return
 	}
-	ctx := c.Request.Context()
-	oid, err := s.organiserIDByUser(ctx, uid)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no_profile"})
-		return
-	}
-	tag, err := s.Pool.Exec(ctx, `
-		UPDATE organiser_clients
-		SET name=$1, contact_email=$2, contact_phone=$3, notes=$4
-		WHERE id=$5 AND organiser_id=$6`,
-		body.Name, nullString(body.ContactEmail), nullString(body.ContactPhone), nullString(body.Notes), cid, oid)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "update_failed"})
-		return
-	}
-	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+	if svcErr := s.OrganiserService.UpdateClient(c.Request.Context(), uid, cid, organiserrepo.ClientInput{
+		Name:         body.Name,
+		ContactEmail: body.ContactEmail,
+		ContactPhone: body.ContactPhone,
+		Notes:        body.Notes,
+	}); svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
@@ -482,41 +365,27 @@ func (s *Server) postOrganiserClientEvent(c *gin.Context) {
 	}
 	cid, err := uuid.Parse(c.Param("clientId"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_client_id"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_CLIENT_ID", "Client id is invalid.")
+		return
+	}
+	if s.OrganiserService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "ORGANISER_SERVICE_UNAVAILABLE", "Organiser service unavailable.")
 		return
 	}
 	var body organiserClientEventBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Organiser event-link payload is invalid.")
 		return
 	}
 	eid, err := uuid.Parse(body.EventID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_event_id"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_EVENT_ID", "Event id is invalid.")
 		return
 	}
-	ctx := c.Request.Context()
-	oid, err := s.organiserIDByUser(ctx, uid)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no_profile"})
-		return
-	}
-	var exists int
-	if err := s.Pool.QueryRow(ctx, `
-		SELECT 1 FROM organiser_clients WHERE id=$1 AND organiser_id=$2`, cid, oid).Scan(&exists); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "client_not_found"})
-		return
-	}
-	if role, ok := s.eventRole(ctx, uid, eid); !ok || (role != "owner" && role != "co_owner" && role != "organiser") {
-		c.JSON(http.StatusForbidden, gin.H{"error": "event_not_accessible"})
-		return
-	}
-	_, err = s.Pool.Exec(ctx, `
-		INSERT INTO organiser_client_events (organiser_client_id, event_id)
-		VALUES ($1,$2)
-		ON CONFLICT DO NOTHING`, cid, eid)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "link_failed"})
+	role, hasRole := s.eventRole(c.Request.Context(), uid, eid)
+	canAccessEvent := hasRole && (role == "owner" || role == "co_owner" || role == "organiser")
+	if svcErr := s.OrganiserService.LinkClientEvent(c.Request.Context(), uid, cid, eid, canAccessEvent); svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"ok": true})
@@ -528,82 +397,38 @@ func (s *Server) postMemoryBookGenerate(c *gin.Context) {
 		return
 	}
 	if !roleCanManageEventData(role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to generate memory book.")
 		return
 	}
-	ctx := c.Request.Context()
-	var slug, title, tier string
-	var ds, de any
-	if err := s.Pool.QueryRow(ctx, `
-		SELECT slug, title, date_start, date_end, tier FROM events WHERE id=$1`, eventID).
-		Scan(&slug, &title, &ds, &de, &tier); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+	if s.MemoryBookService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "MEMORY_BOOK_SERVICE_UNAVAILABLE", "Memory book service unavailable.")
 		return
 	}
-	var guestsTotal, rsvpTotal, rsvpYes, shagunCount, galleryApproved, broadcastsCount int64
-	var shagunPaise int64
-	_ = s.Pool.QueryRow(ctx, `SELECT count(*) FROM guests WHERE event_id=$1`, eventID).Scan(&guestsTotal)
-	_ = s.Pool.QueryRow(ctx, `SELECT count(*) FROM rsvp_responses WHERE event_id=$1`, eventID).Scan(&rsvpTotal)
-	_ = s.Pool.QueryRow(ctx, `SELECT count(*) FROM rsvp_responses WHERE event_id=$1 AND status='yes'`, eventID).Scan(&rsvpYes)
-	_ = s.Pool.QueryRow(ctx, `SELECT count(*), coalesce(sum(amount_paise),0) FROM shagun_entries WHERE event_id=$1`, eventID).
-		Scan(&shagunCount, &shagunPaise)
-	_ = s.Pool.QueryRow(ctx, `SELECT count(*) FROM gallery_assets WHERE event_id=$1 AND status='approved'`, eventID).Scan(&galleryApproved)
-	_ = s.Pool.QueryRow(ctx, `SELECT count(*) FROM broadcasts WHERE event_id=$1`, eventID).Scan(&broadcastsCount)
-
-	mbSlug := slug + "-memory"
-	now := time.Now().UTC().Format(time.RFC3339)
-	payload := map[string]any{
-		"version":      1,
-		"generated_at": now,
-		"event": map[string]any{
-			"id":         eventID.String(),
-			"slug":       slug,
-			"title":      title,
-			"date_start": ds,
-			"date_end":   de,
-			"tier":       tier,
-		},
-		"highlights": map[string]any{
-			"guest_count":        guestsTotal,
-			"rsvp_count":         rsvpTotal,
-			"rsvp_yes_count":     rsvpYes,
-			"shagun_count":       shagunCount,
-			"shagun_total_paise": shagunPaise,
-			"gallery_assets":     galleryApproved,
-			"broadcasts":         broadcastsCount,
-		},
-	}
-	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO memory_books (event_id, slug, payload)
-		VALUES ($1,$2,$3::jsonb)
-		ON CONFLICT (slug) DO UPDATE SET payload=EXCLUDED.payload, generated_at=now()`,
-		eventID, mbSlug, mustJSONB(payload))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "generate_failed", "detail": err.Error()})
+	result, svcErr := s.MemoryBookService.Generate(c.Request.Context(), eventID)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"slug": mbSlug, "public_api_path": "/v1/public/memory/" + mbSlug, "payload": payload,
-		"export_pdf_available": tier != "free",
+		"slug":                 result.Slug,
+		"public_api_path":      "/v1/public/memory/" + result.Slug,
+		"payload":              result.Payload,
+		"export_pdf_available": result.ExportPDFAvailable,
 	})
 }
 
 func (s *Server) getPublicMemoryBook(c *gin.Context) {
 	mslug := strings.TrimSpace(c.Param("slug"))
-	ctx := c.Request.Context()
-	var payload []byte
-	var eid uuid.UUID
-	err := s.Pool.QueryRow(ctx, `SELECT event_id, payload FROM memory_books WHERE slug=$1`, mslug).Scan(&eid, &payload)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+	if s.MemoryBookService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "MEMORY_BOOK_SERVICE_UNAVAILABLE", "Memory book service unavailable.")
 		return
 	}
-	var decoded any
-	if err := json.Unmarshal(payload, &decoded); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "decode_failed"})
+	eid, payload, svcErr := s.MemoryBookService.GetPublic(c.Request.Context(), mslug)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"event_id": eid.String(), "slug": mslug, "payload": decoded})
+	c.JSON(http.StatusOK, gin.H{"event_id": eid, "slug": mslug, "payload": payload})
 }
 
 func (s *Server) postMemoryBookExport(c *gin.Context) {
@@ -612,21 +437,23 @@ func (s *Server) postMemoryBookExport(c *gin.Context) {
 		return
 	}
 	if !roleCanManageEventData(role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to export memory book.")
 		return
 	}
-	ctx := c.Request.Context()
-	var tier string
-	if err := s.Pool.QueryRow(ctx, `SELECT tier FROM events WHERE id=$1`, eventID).Scan(&tier); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+	if s.MemoryBookService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "MEMORY_BOOK_SERVICE_UNAVAILABLE", "Memory book service unavailable.")
 		return
 	}
-	if tier == "free" {
-		c.JSON(http.StatusPaymentRequired, gin.H{
-			"error":         "tier_upgrade_required",
-			"required_tier": "pro",
-			"hint":          "Upgrade tier before PDF export is enabled.",
-		})
+	if svcErr := s.MemoryBookService.Export(c.Request.Context(), eventID); svcErr != nil {
+		if svcErr.Status == http.StatusPaymentRequired {
+			c.JSON(http.StatusPaymentRequired, gin.H{
+				"error":         "tier_upgrade_required",
+				"required_tier": "pro",
+				"hint":          "Upgrade tier before PDF export is enabled.",
+			})
+			return
+		}
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
 	c.JSON(http.StatusAccepted, gin.H{
@@ -642,14 +469,7 @@ type billingCheckoutBody struct {
 }
 
 func tierPricePaise(tier string) int64 {
-	switch strings.ToLower(strings.TrimSpace(tier)) {
-	case "pro":
-		return 99000
-	case "elite":
-		return 249000
-	default:
-		return 0
-	}
+	return billingservice.TierPricePaise(tier)
 }
 
 func (s *Server) postBillingCheckout(c *gin.Context) {
@@ -657,38 +477,30 @@ func (s *Server) postBillingCheckout(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var body billingCheckoutBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+	if s.BillingService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "BILLING_SERVICE_UNAVAILABLE", "Billing service unavailable.")
 		return
 	}
-	var eid any
-	if body.EventID != "" {
-		if u, err := uuid.Parse(body.EventID); err == nil {
-			eid = u
-		}
+	var body billingCheckoutBody
+	if err := c.ShouldBindJSON(&body); err != nil {
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Checkout payload is invalid.")
+		return
 	}
-	ctx := c.Request.Context()
-	var id uuid.UUID
 	orderID := "order_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	if len(orderID) > 40 {
 		orderID = orderID[:40]
 	}
-	amount := tierPricePaise(body.Tier)
-	err := s.Pool.QueryRow(ctx, `
-		INSERT INTO billing_checkouts (user_id, event_id, tier, razorpay_order_id, status)
-		VALUES ($1,$2,$3,$4,'created') RETURNING id`,
-		uid, eid, body.Tier, orderID).Scan(&id)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "checkout_failed", "detail": err.Error()})
+	result, svcErr := s.BillingService.CreateCheckout(c.Request.Context(), uid, body.Tier, body.EventID, orderID)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{
-		"id":                 id.String(),
-		"order_id":           orderID,
+		"id":                 result.ID,
+		"order_id":           result.OrderID,
 		"key_id":             s.Config.RazorpayKeyID,
 		"currency":           "INR",
-		"amount_paise":       amount,
+		"amount_paise":       result.AmountPaise,
 		"status":             "created",
 		"razorpay_stub":      true,
 		"webhook_ready":      true,
@@ -701,26 +513,14 @@ func (s *Server) listBillingCheckouts(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rows, err := s.Pool.Query(c.Request.Context(), `
-		SELECT id, event_id, tier, razorpay_order_id, status, created_at
-		FROM billing_checkouts
-		WHERE user_id=$1
-		ORDER BY created_at DESC`, uid)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "query_failed"})
+	if s.BillingService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "BILLING_SERVICE_UNAVAILABLE", "Billing service unavailable.")
 		return
 	}
-	defer rows.Close()
-	out := []gin.H{}
-	for rows.Next() {
-		var id uuid.UUID
-		var eventID any
-		var tier, orderID, status string
-		var created any
-		_ = rows.Scan(&id, &eventID, &tier, &orderID, &status, &created)
-		out = append(out, gin.H{
-			"id": id.String(), "event_id": eventID, "tier": tier, "order_id": orderID, "status": status, "created_at": created,
-		})
+	out, svcErr := s.BillingService.ListCheckouts(c.Request.Context(), uid)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"checkouts": out})
 }
@@ -757,12 +557,12 @@ func hexString(s string) ([]byte, error) {
 func (s *Server) postRazorpayWebhook(c *gin.Context) {
 	payload, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Webhook payload is invalid.")
 		return
 	}
 	sig := c.GetHeader("X-Razorpay-Signature")
 	if !verifyRazorpayWebhookSignature(s.Config.RazorpayWebhookSecret, payload, sig) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "bad_signature"})
+		writeAPIError(c, http.StatusUnauthorized, "BAD_SIGNATURE", "Webhook signature verification failed.")
 		return
 	}
 	var body struct {
@@ -776,7 +576,7 @@ func (s *Server) postRazorpayWebhook(c *gin.Context) {
 		} `json:"payload"`
 	}
 	if err := json.Unmarshal(payload, &body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_json"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_JSON", "Webhook JSON payload is invalid.")
 		return
 	}
 	if body.Event != "payment.captured" {
@@ -785,21 +585,16 @@ func (s *Server) postRazorpayWebhook(c *gin.Context) {
 	}
 	orderID := strings.TrimSpace(body.Payload.Payment.Entity.OrderID)
 	if orderID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_order_id"})
+		writeAPIError(c, http.StatusBadRequest, "MISSING_ORDER_ID", "Order id is required.")
 		return
 	}
-	ctx := c.Request.Context()
-	tag, err := s.Pool.Exec(ctx, `UPDATE billing_checkouts SET status='paid' WHERE razorpay_order_id=$1`, orderID)
-	if err != nil || tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "checkout_not_found"})
+	if s.BillingService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "BILLING_SERVICE_UNAVAILABLE", "Billing service unavailable.")
 		return
 	}
-	var tier string
-	var eventID any
-	_ = s.Pool.QueryRow(ctx, `
-		SELECT tier, event_id FROM billing_checkouts WHERE razorpay_order_id=$1`, orderID).Scan(&tier, &eventID)
-	if eventID != nil {
-		_, _ = s.Pool.Exec(ctx, `UPDATE events SET tier=$1 WHERE id=$2`, tier, eventID)
+	if svcErr := s.BillingService.MarkOrderPaid(c.Request.Context(), orderID); svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "order_id": orderID, "status": "paid"})
 }

@@ -1,12 +1,11 @@
 package httpserver
 
 import (
-	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/bhune/utsav/services/api/internal/repository/eventrepo"
 )
 
 type createEventBody struct {
@@ -26,15 +25,16 @@ type createEventBody struct {
 }
 
 func (s *Server) getCheckSlug(c *gin.Context) {
-	slug := strings.TrimSpace(strings.ToLower(c.Query("slug")))
-	if slug == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_slug"})
+	if s.EventService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "EVENT_SERVICE_UNAVAILABLE", "Event service unavailable.")
 		return
 	}
-	ctx := c.Request.Context()
-	var exists bool
-	_ = s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE slug=$1)`, slug).Scan(&exists)
-	c.JSON(http.StatusOK, gin.H{"slug": slug, "available": !exists})
+	slug, available, svcErr := s.EventService.CheckSlug(c.Request.Context(), c.Query("slug"))
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"slug": slug, "available": available})
 }
 
 func (s *Server) postEvent(c *gin.Context) {
@@ -42,73 +42,36 @@ func (s *Server) postEvent(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if s.EventService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "EVENT_SERVICE_UNAVAILABLE", "Event service unavailable.")
+		return
+	}
 	var body createEventBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Event payload is invalid.")
 		return
 	}
-	slug := strings.TrimSpace(strings.ToLower(body.Slug))
-	if slug == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_slug"})
+	id, slug, svcErr := s.EventService.CreateEvent(c.Request.Context(), eventrepo.CreateEventInput{
+		OwnerUserID: uid,
+		Slug:        body.Slug,
+		Title:       body.Title,
+		EventType:   body.EventType,
+		CoupleA:     body.CoupleA,
+		CoupleB:     body.CoupleB,
+		LoveStory:   body.LoveStory,
+		CoverURL:    body.CoverURL,
+		DateStart:   body.DateStart,
+		DateEnd:     body.DateEnd,
+		Privacy:     body.Privacy,
+		Toggles:     body.Toggles,
+		Branding:    body.Branding,
+		HostUPIVPA:  body.HostUPIVPA,
+	})
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	if body.EventType == "" {
-		body.EventType = "wedding"
-	}
-	if body.Privacy == "" {
-		body.Privacy = "public"
-	}
-	ctx := c.Request.Context()
-	tx, err := s.Pool.Begin(ctx)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "tx_begin"})
-		return
-	}
-	defer tx.Rollback(ctx)
-
-	var eid uuid.UUID
-	err = tx.QueryRow(ctx, `
-		INSERT INTO events (
-			owner_user_id, slug, title, event_type, couple_name_a, couple_name_b, love_story,
-			cover_image_url, date_start, date_end, privacy, toggles, branding, host_upi_vpa
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,coalesce($12::jsonb,'{}'),coalesce($13::jsonb,'{}'),$14)
-		RETURNING id`,
-		uid, slug, body.Title, body.EventType, nullStr(body.CoupleA), nullStr(body.CoupleB), nullStr(body.LoveStory),
-		nullStr(body.CoverURL), body.DateStart, body.DateEnd, body.Privacy, mustJSONB(body.Toggles), mustJSONB(body.Branding), nullStr(body.HostUPIVPA),
-	).Scan(&eid)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "create_failed", "detail": err.Error()})
-		return
-	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO event_members (event_id, user_id, role, status) VALUES ($1,$2,'owner','active')`, eid, uid)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "member_failed"})
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "commit_failed"})
-		return
-	}
-	c.JSON(http.StatusCreated, gin.H{"id": eid.String(), "slug": slug})
-}
-
-func nullStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func mustJSONB(m map[string]any) []byte {
-	if m == nil {
-		return []byte("{}")
-	}
-	b, err := json.Marshal(m)
-	if err != nil {
-		return []byte("{}")
-	}
-	return b
+	c.JSON(http.StatusCreated, gin.H{"id": id, "slug": slug})
 }
 
 func (s *Server) listEvents(c *gin.Context) {
@@ -116,65 +79,37 @@ func (s *Server) listEvents(c *gin.Context) {
 	if !ok {
 		return
 	}
-	ctx := c.Request.Context()
-	rows, err := s.Pool.Query(ctx, `
-		SELECT e.id, e.slug, e.title, e.event_type, e.date_start, e.updated_at
-		FROM events e
-		WHERE e.owner_user_id=$1
-		UNION
-		SELECT e.id, e.slug, e.title, e.event_type, e.date_start, e.updated_at
-		FROM events e
-		JOIN event_members m ON m.event_id=e.id AND m.user_id=$1 AND m.status='active'
-		ORDER BY updated_at DESC`, uid)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "query_failed"})
+	if s.EventService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "EVENT_SERVICE_UNAVAILABLE", "Event service unavailable.")
 		return
 	}
-	defer rows.Close()
-	out := []gin.H{}
-	for rows.Next() {
-		var id uuid.UUID
-		var slug, title, etype string
-		var ds any
-		var updated any
-		_ = rows.Scan(&id, &slug, &title, &etype, &ds, &updated)
-		out = append(out, gin.H{"id": id.String(), "slug": slug, "title": title, "event_type": etype, "date_start": ds})
+	rows, svcErr := s.EventService.ListEvents(c.Request.Context(), uid)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{"events": out})
+	c.JSON(http.StatusOK, gin.H{"events": rows})
 }
 
 func (s *Server) getEvent(c *gin.Context) {
-	userID, eventID, role, ok := s.requireEventAccess(c)
+	_, eventID, _, ok := s.requireEventAccess(c)
 	if !ok {
 		return
 	}
-	_ = role
-	_ = userID
-	ctx := c.Request.Context()
-	row := s.Pool.QueryRow(ctx, `
-		SELECT id, slug, title, event_type, couple_name_a, couple_name_b, love_story, cover_image_url,
-			date_start, date_end, privacy, toggles, branding, host_upi_vpa, tier, created_at, updated_at
-		FROM events WHERE id=$1`, eventID)
-	var e struct {
-		ID, Slug, Title, EventType string
-		CA, CB, Love, Cover        *string
-		DS, DE                      *string
-		Privacy                     string
-		Toggles, Branding           []byte
-		VPA                         *string
-		Tier                        string
-		Created, Updated            any
+	if s.EventService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "EVENT_SERVICE_UNAVAILABLE", "Event service unavailable.")
+		return
 	}
-	var id uuid.UUID
-	if err := row.Scan(&id, &e.Slug, &e.Title, &e.EventType, &e.CA, &e.CB, &e.Love, &e.Cover, &e.DS, &e.DE, &e.Privacy, &e.Toggles, &e.Branding, &e.VPA, &e.Tier, &e.Created, &e.Updated); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+	event, svcErr := s.EventService.GetEvent(c.Request.Context(), eventID)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"id": id.String(), "slug": e.Slug, "title": e.Title, "event_type": e.EventType,
-		"couple_name_a": e.CA, "couple_name_b": e.CB, "love_story": e.Love, "cover_image_url": e.Cover,
-		"date_start": e.DS, "date_end": e.DE, "privacy": e.Privacy,
-		"toggles": string(e.Toggles), "branding": string(e.Branding), "host_upi_vpa": e.VPA, "tier": e.Tier,
+		"id": event.ID, "slug": event.Slug, "title": event.Title, "event_type": event.EventType,
+		"couple_name_a": event.CoupleA, "couple_name_b": event.CoupleB, "love_story": event.LoveStory, "cover_image_url": event.CoverURL,
+		"date_start": event.DateStart, "date_end": event.DateEnd, "privacy": event.Privacy,
+		"toggles": event.Toggles, "branding": event.Branding, "host_upi_vpa": event.HostUPIVPA, "tier": event.Tier,
 	})
 }
 
@@ -192,23 +127,29 @@ func (s *Server) patchEvent(c *gin.Context) {
 		return
 	}
 	if !roleCanManageEventData(role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You do not have permission to update this event.")
+		return
+	}
+	if s.EventService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "EVENT_SERVICE_UNAVAILABLE", "Event service unavailable.")
 		return
 	}
 	var body patchEventBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Event patch payload is invalid.")
 		return
 	}
-	ctx := c.Request.Context()
-	if body.Title != nil {
-		_, _ = s.Pool.Exec(ctx, `UPDATE events SET title=$2, updated_at=now() WHERE id=$1`, eventID, *body.Title)
+	hostVPA := body.HostUPIVPA
+	if hostVPA != nil && !roleCanManageFinancials(role) {
+		hostVPA = nil
 	}
-	if body.Privacy != nil {
-		_, _ = s.Pool.Exec(ctx, `UPDATE events SET privacy=$2, updated_at=now() WHERE id=$1`, eventID, *body.Privacy)
-	}
-	if body.HostUPIVPA != nil && roleCanManageFinancials(role) {
-		_, _ = s.Pool.Exec(ctx, `UPDATE events SET host_upi_vpa=$2, updated_at=now() WHERE id=$1`, eventID, *body.HostUPIVPA)
+	if svcErr := s.EventService.PatchEvent(c.Request.Context(), eventID, role, eventrepo.PatchEventInput{
+		Title:      body.Title,
+		Privacy:    body.Privacy,
+		HostUPIVPA: hostVPA,
+	}); svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
@@ -229,28 +170,32 @@ func (s *Server) postSubEvent(c *gin.Context) {
 		return
 	}
 	if !roleCanManageEventData(role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You do not have permission to create sub-events.")
+		return
+	}
+	if s.EventService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "EVENT_SERVICE_UNAVAILABLE", "Event service unavailable.")
 		return
 	}
 	var body subEventBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Sub-event payload is invalid.")
 		return
 	}
-	ctx := c.Request.Context()
-	var sid uuid.UUID
-	err := s.Pool.QueryRow(ctx, `
-		INSERT INTO sub_events (event_id, name, sub_type, starts_at, ends_at, venue_label, dress_code, description, sort_order)
-		VALUES ($1,$2,$3,CAST($4 AS timestamptz),CAST($5 AS timestamptz),$6,$7,$8,
-			(SELECT COALESCE(MAX(sort_order),0)+1 FROM sub_events WHERE event_id=$1))
-		RETURNING id`,
-		eventID, body.Name, body.SubType, body.StartsAt, body.EndsAt, body.VenueLabel, body.DressCode, body.Description,
-	).Scan(&sid)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "create_failed", "detail": err.Error()})
+	id, svcErr := s.EventService.CreateSubEvent(c.Request.Context(), eventID, eventrepo.CreateSubEventInput{
+		Name:        body.Name,
+		SubType:     body.SubType,
+		StartsAt:    body.StartsAt,
+		EndsAt:      body.EndsAt,
+		VenueLabel:  body.VenueLabel,
+		DressCode:   body.DressCode,
+		Description: body.Description,
+	})
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"id": sid.String()})
+	c.JSON(http.StatusCreated, gin.H{"id": id})
 }
 
 func (s *Server) listSubEvents(c *gin.Context) {
@@ -258,26 +203,14 @@ func (s *Server) listSubEvents(c *gin.Context) {
 	if !ok {
 		return
 	}
-	ctx := c.Request.Context()
-	rows, err := s.Pool.Query(ctx, `
-		SELECT id, name, sub_type, starts_at, ends_at, venue_label, dress_code, description, sort_order
-		FROM sub_events WHERE event_id=$1 ORDER BY sort_order, starts_at`, eventID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "query_failed"})
+	if s.EventService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "EVENT_SERVICE_UNAVAILABLE", "Event service unavailable.")
 		return
 	}
-	defer rows.Close()
-	list := []gin.H{}
-	for rows.Next() {
-		var id uuid.UUID
-		var name, stype, vl, dc, desc string
-		var starts, ends any
-		var sort int
-		_ = rows.Scan(&id, &name, &stype, &starts, &ends, &vl, &dc, &desc, &sort)
-		list = append(list, gin.H{
-			"id": id.String(), "name": name, "sub_type": stype, "starts_at": starts, "ends_at": ends,
-			"venue_label": vl, "dress_code": dc, "description": desc, "sort_order": sort,
-		})
+	list, svcErr := s.EventService.ListSubEvents(c.Request.Context(), eventID)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+		return
 	}
 	c.JSON(http.StatusOK, gin.H{"sub_events": list})
 }
@@ -293,20 +226,20 @@ func (s *Server) postEventMember(c *gin.Context) {
 		return
 	}
 	if role != "owner" && role != "co_owner" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "Only owners can invite members.")
+		return
+	}
+	if s.EventService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "EVENT_SERVICE_UNAVAILABLE", "Event service unavailable.")
 		return
 	}
 	var body inviteMemberBody
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Invite payload is invalid.")
 		return
 	}
-	ctx := c.Request.Context()
-	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO event_members (event_id, role, invited_phone, status)
-		VALUES ($1,$2,$3,'invited')`, eventID, body.Role, body.InvitedPhone)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invite_failed"})
+	if svcErr := s.EventService.InviteMember(c.Request.Context(), eventID, body.Role, body.InvitedPhone); svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"ok": true})

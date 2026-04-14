@@ -15,6 +15,30 @@ import (
 	"github.com/bhune/utsav/services/api/internal/middleware"
 	"github.com/bhune/utsav/services/api/internal/migrate"
 	"github.com/bhune/utsav/services/api/internal/ratelimit"
+	"github.com/bhune/utsav/services/api/internal/repository/authrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/billingrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/broadcastrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/eventrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/galleryrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/guestrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/memorybookrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/rsvprepo"
+	"github.com/bhune/utsav/services/api/internal/repository/shagunrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/vendorrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/organiserrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/publicrepo"
+	authservice "github.com/bhune/utsav/services/api/internal/service/auth"
+	billingservice "github.com/bhune/utsav/services/api/internal/service/billing"
+	broadcastservice "github.com/bhune/utsav/services/api/internal/service/broadcast"
+	eventservice "github.com/bhune/utsav/services/api/internal/service/event"
+	galleryservice "github.com/bhune/utsav/services/api/internal/service/gallery"
+	guestservice "github.com/bhune/utsav/services/api/internal/service/guest"
+	memorybookservice "github.com/bhune/utsav/services/api/internal/service/memorybook"
+	organiserservice "github.com/bhune/utsav/services/api/internal/service/organiser"
+	publicservice "github.com/bhune/utsav/services/api/internal/service/public"
+	rsvpservice "github.com/bhune/utsav/services/api/internal/service/rsvp"
+	shagunservice "github.com/bhune/utsav/services/api/internal/service/shagun"
+	vendorservice "github.com/bhune/utsav/services/api/internal/service/vendor"
 )
 
 func main() {
@@ -48,6 +72,28 @@ func main() {
 		RSVPOTPLimit: ratelimit.New(10, 15*time.Minute),
 		MediaSigner:  media.URLSigner{BaseURL: cfg.ObjectStorePublicBaseURL},
 	}
+	srv.AuthService = authservice.NewService(
+		authrepo.NewPGRepository(pool),
+		srv.AuthOTPLimit,
+		cfg.DevOTPCode,
+		cfg.JWTSecret,
+	)
+	srv.BillingService = billingservice.NewService(billingrepo.NewPGRepository(pool))
+	srv.BroadcastService = broadcastservice.NewService(broadcastrepo.NewPGRepository(pool))
+	srv.EventService = eventservice.NewService(eventrepo.NewPGRepository(pool))
+	srv.GalleryService = galleryservice.NewService(galleryrepo.NewPGRepository(pool), srv.MediaSigner)
+	srv.OrganiserService = organiserservice.NewService(organiserrepo.NewPGRepository(pool))
+	srv.MemoryBookService = memorybookservice.NewService(memorybookrepo.NewPGRepository(pool))
+	srv.PublicService = publicservice.NewService(publicrepo.NewPGRepository(pool), srv.MediaSigner)
+	srv.RSVPService = rsvpservice.NewService(
+		rsvprepo.NewPGRepository(pool),
+		srv.RSVPOTPLimit,
+		cfg.DevOTPCode,
+		cfg.JWTSecret,
+	)
+	srv.GuestService = guestservice.NewService(guestrepo.NewPGRepository(pool))
+	srv.ShagunService = shagunservice.NewService(shagunrepo.NewPGRepository(pool))
+	srv.VendorService = vendorservice.NewService(vendorrepo.NewPGRepository(pool))
 	srv.Mount(r)
 
 	addr := ":" + cfg.HTTPPort

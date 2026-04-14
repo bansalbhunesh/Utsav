@@ -13,6 +13,18 @@ import (
 	"github.com/bhune/utsav/services/api/internal/config"
 	"github.com/bhune/utsav/services/api/internal/media"
 	"github.com/bhune/utsav/services/api/internal/ratelimit"
+	authservice "github.com/bhune/utsav/services/api/internal/service/auth"
+	billingservice "github.com/bhune/utsav/services/api/internal/service/billing"
+	broadcastservice "github.com/bhune/utsav/services/api/internal/service/broadcast"
+	eventservice "github.com/bhune/utsav/services/api/internal/service/event"
+	galleryservice "github.com/bhune/utsav/services/api/internal/service/gallery"
+	guestservice "github.com/bhune/utsav/services/api/internal/service/guest"
+	memorybookservice "github.com/bhune/utsav/services/api/internal/service/memorybook"
+	organiserservice "github.com/bhune/utsav/services/api/internal/service/organiser"
+	publicservice "github.com/bhune/utsav/services/api/internal/service/public"
+	rsvpservice "github.com/bhune/utsav/services/api/internal/service/rsvp"
+	shagunservice "github.com/bhune/utsav/services/api/internal/service/shagun"
+	vendorservice "github.com/bhune/utsav/services/api/internal/service/vendor"
 )
 
 type apiErrorDetail struct {
@@ -41,6 +53,18 @@ type Server struct {
 	AuthOTPLimit *ratelimit.Window
 	RSVPOTPLimit *ratelimit.Window
 	MediaSigner  media.Signer
+	AuthService  *authservice.Service
+	BillingService *billingservice.Service
+	BroadcastService *broadcastservice.Service
+	EventService *eventservice.Service
+	GalleryService *galleryservice.Service
+	MemoryBookService *memorybookservice.Service
+	OrganiserService *organiserservice.Service
+	PublicService *publicservice.Service
+	RSVPService  *rsvpservice.Service
+	GuestService *guestservice.Service
+	ShagunService *shagunservice.Service
+	VendorService *vendorservice.Service
 }
 
 func bearerUserID(c *gin.Context, secret []byte) (uuid.UUID, bool) {
