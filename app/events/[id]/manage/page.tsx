@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
@@ -22,6 +22,9 @@ import { BroadcastCenter } from '@/components/event/BroadcastCenter'
 import { paymentService } from '@/lib/services/PaymentService'
 import { apiFetch } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { useQuery } from '@tanstack/react-query'
+import { getUserFacingError } from '@/lib/error-messages'
+import { parseHostEvent, parseHostShagunResponse } from '@/lib/contracts/host'
 
 interface EventDetails {
   id: string
@@ -45,36 +48,41 @@ export default function EventManagePage() {
   const router = useRouter()
   const eventId = params.id as string
   
-  const [event, setEvent] = useState<EventDetails | null>(null)
-  const [shagun, setShagun] = useState<ShagunItem[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-
   const fetchData = useCallback(async () => {
-    try {
-      const [eventData, shagunData] = await Promise.all([
-        apiFetch<EventDetails>(`/v1/events/${eventId}`),
-        apiFetch<{ shagun: ShagunItem[] }>(`/v1/events/${eventId}/shagun`),
-      ])
-      setEvent(eventData)
-      setShagun(shagunData.shagun || [])
-    } catch (err) {
-      console.error('Failed to load event management data:', err)
-      setEvent(null)
-      setShagun([])
-    } finally {
-      setIsLoading(false)
+    const [eventData, shagunData] = await Promise.all([
+      apiFetch<unknown>(`/v1/events/${eventId}`),
+      apiFetch<unknown>(`/v1/events/${eventId}/shagun`),
+    ])
+    return {
+      event: parseHostEvent(eventData),
+      shagun: parseHostShagunResponse(shagunData).shagun as ShagunItem[],
     }
   }, [eventId])
 
-  useEffect(() => {
-    void fetchData()
-  }, [fetchData])
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['event-manage', eventId],
+    queryFn: fetchData,
+  })
+
+  const event = data?.event || null
+  const shagun = data?.shagun || []
+  const errorMessage = error ? getUserFacingError(error, 'Failed to load event management data.') : null
 
   const totalShagun = shagun.reduce((acc, curr) => acc + (Number(curr.amount_paise) || 0), 0) / 100
   const digitalCount = shagun.filter(s => s.channel === 'UPI').length
   const cashCount = shagun.filter(s => s.channel === 'CASH').length
 
   if (isLoading) return <div className="p-10 text-center animate-pulse">Loading event control...</div>
+  if (errorMessage) {
+    return (
+      <div className="p-10 text-center space-y-4">
+        <p className="text-red-600 font-bold">{errorMessage}</p>
+        <Button variant="outline" onClick={() => void refetch()} className="rounded-xl">
+          Retry
+        </Button>
+      </div>
+    )
+  }
   if (!event) return <div className="p-10 text-center">Event not found.</div>
 
   return (
