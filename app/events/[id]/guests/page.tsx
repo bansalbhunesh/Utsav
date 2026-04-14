@@ -2,42 +2,38 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { getUserFacingError } from "@/lib/error-messages";
+import {
+  parseHostGuestsImportResponse,
+  parseHostGuestsResponse,
+} from "@/lib/contracts/host";
 
 type Guest = { id: string; name: string; phone: string };
 
 export default function GuestsPage() {
   const { id } = useParams();
   const eventId = String(id || "");
-  const [guests, setGuests] = useState<Guest[]>([]);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [csv, setCsv] = useState("name,phone\nPriya,+919876543210");
   const [importMsg, setImportMsg] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    const d = await apiFetch<{ guests: Guest[] }>(`/v1/events/${eventId}/guests`);
-    setGuests(d.guests || []);
-  }, [eventId]);
-
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        await load();
-      } catch (e) {
-        if (active) setErr(String(e));
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [load]);
+  const { data, error, refetch } = useQuery({
+    queryKey: ["event-guests", eventId],
+    queryFn: async () => {
+      const raw = await apiFetch<unknown>(`/v1/events/${eventId}/guests`);
+      return parseHostGuestsResponse(raw);
+    },
+  });
+  const guests: Guest[] = data?.guests || [];
+  const err = error ? getUserFacingError(error, "Failed to load guests.") : actionErr;
 
   async function addGuest() {
-    setErr(null);
+    setActionErr(null);
     try {
       await apiFetch(`/v1/events/${eventId}/guests`, {
         method: "POST",
@@ -45,24 +41,25 @@ export default function GuestsPage() {
       });
       setName("");
       setPhone("");
-      await load();
+      await refetch();
     } catch (e) {
-      setErr(String(e));
+      setActionErr(getUserFacingError(e, "Failed to add guest."));
     }
   }
 
   async function importCsv() {
-    setErr(null);
+    setActionErr(null);
     setImportMsg(null);
     try {
-      const d = await apiFetch<{ imported: number; errors: { line: number; error: string }[] }>(
+      const raw = await apiFetch<unknown>(
         `/v1/events/${eventId}/guests/import`,
         { method: "POST", json: { csv } },
       );
+      const d = parseHostGuestsImportResponse(raw);
       setImportMsg(`Imported ${d.imported}. Row errors: ${d.errors?.length ?? 0}.`);
-      await load();
+      await refetch();
     } catch (e) {
-      setErr(String(e));
+      setActionErr(getUserFacingError(e, "Failed to import guests CSV."));
     }
   }
 

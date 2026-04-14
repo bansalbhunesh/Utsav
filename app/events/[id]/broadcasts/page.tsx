@@ -2,8 +2,14 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { getUserFacingError } from "@/lib/error-messages";
+import {
+  parseHostBroadcastsResponse,
+  parseHostSubEventsResponse,
+} from "@/lib/contracts/host";
 
 type SubEvent = { id: string; name: string };
 type Broadcast = {
@@ -18,7 +24,7 @@ type Broadcast = {
 export default function EventBroadcastsPage() {
   const params = useParams();
   const id = String(params.id || "");
-  const [err, setErr] = useState<string | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [announcementType, setAnnouncementType] = useState("general");
@@ -26,8 +32,6 @@ export default function EventBroadcastsPage() {
   const [sidesCsv, setSidesCsv] = useState("");
   const [onlyRsvpYes, setOnlyRsvpYes] = useState(false);
   const [includeSubIds, setIncludeSubIds] = useState<string[]>([]);
-  const [subs, setSubs] = useState<SubEvent[]>([]);
-  const [items, setItems] = useState<Broadcast[]>([]);
 
   const audience = useMemo(() => {
     const tags = tagCsv
@@ -47,31 +51,25 @@ export default function EventBroadcastsPage() {
     };
   }, [tagCsv, sidesCsv, onlyRsvpYes, includeSubIds]);
 
-  const load = useCallback(async () => {
-    const [subData, listData] = await Promise.all([
-      apiFetch<{ sub_events: SubEvent[] }>(`/v1/events/${id}/sub-events`),
-      apiFetch<{ broadcasts: Broadcast[] }>(`/v1/events/${id}/broadcasts`),
-    ]);
-    setSubs(subData.sub_events || []);
-    setItems(listData.broadcasts || []);
-  }, [id]);
-
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        await load();
-      } catch (e) {
-        if (active) setErr(String(e));
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [load]);
+  const { data, error, refetch } = useQuery({
+    queryKey: ["event-broadcasts", id],
+    queryFn: async () => {
+      const [subRaw, listRaw] = await Promise.all([
+        apiFetch<unknown>(`/v1/events/${id}/sub-events`),
+        apiFetch<unknown>(`/v1/events/${id}/broadcasts`),
+      ]);
+      return {
+        subs: parseHostSubEventsResponse(subRaw).sub_events as SubEvent[],
+        items: parseHostBroadcastsResponse(listRaw).broadcasts as Broadcast[],
+      };
+    },
+  });
+  const subs = data?.subs || [];
+  const items = data?.items || [];
+  const err = error ? getUserFacingError(error, "Failed to load broadcasts.") : actionErr;
 
   async function createBroadcast() {
-    setErr(null);
+    setActionErr(null);
     try {
       await apiFetch(`/v1/events/${id}/broadcasts`, {
         method: "POST",
@@ -84,9 +82,9 @@ export default function EventBroadcastsPage() {
       });
       setTitle("");
       setBody("");
-      await load();
+      await refetch();
     } catch (e) {
-      setErr(String(e));
+      setActionErr(getUserFacingError(e, "Failed to create broadcast."));
     }
   }
 
