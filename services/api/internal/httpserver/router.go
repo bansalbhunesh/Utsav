@@ -34,6 +34,7 @@ func (s *Server) Mount(r *gin.Engine) {
 	eventAuthed.POST("/members", s.postEventMember)
 
 	eventAuthed.GET("/guests", s.listGuests)
+	eventAuthed.GET("/intelligence/relationship-priority", s.getRelationshipPriorityOverview)
 	eventAuthed.POST("/guests", s.postGuest)
 	eventAuthed.POST("/guests/import", s.postGuestsImport)
 	eventAuthed.GET("/vendors", s.listVendors)

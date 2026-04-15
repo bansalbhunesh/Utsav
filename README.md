@@ -1,29 +1,142 @@
 # UTSAV
 
-UTSAV is an event operations platform for weddings and social celebrations.  
-It unifies host, guest, and organiser workflows into one system: OTP auth, RSVP, guest operations, shagun tracking, gallery, broadcasts, and memory-book generation.
-
 [![CI](https://github.com/bansalbhunesh/Utsav/actions/workflows/ci.yml/badge.svg)](https://github.com/bansalbhunesh/Utsav/actions/workflows/ci.yml)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org/)
 [![Go](https://img.shields.io/badge/Go-1.25+-00ADD8)](https://go.dev/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Production-blue)](https://www.postgresql.org/)
 [![License](https://img.shields.io/badge/license-Proprietary-lightgrey)](#license)
+
+UTSAV is a production-grade event operating system for high-stakes celebrations.  
+It combines event operations (OTP auth, RSVP, guest, shagun, gallery, broadcast, billing) with an intelligence layer that helps hosts make better decisions under real-world traffic and time pressure.
 
 ## Table of Contents
 
-- [Quick Start](#quick-start)
-- [What’s in this Repository](#whats-in-this-repository)
+- [Overview](#overview)
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
-- [Production Hardening Included](#production-hardening-included)
-- [Local Validation Commands](#local-validation-commands)
+- [Scalability Features](#scalability-features)
+- [Key Innovations](#key-innovations)
+- [Setup Instructions](#setup-instructions)
+- [Validation Commands](#validation-commands)
 - [API Examples](#api-examples)
-- [Environment Variables](#environment-variables)
 - [Deployment](#deployment)
-- [Contributing](#contributing)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 
-## Quick Start
+## Overview
+
+UTSAV is built as a full-stack monorepo with a Next.js frontend and Go backend, designed for:
+
+- Reliable host and guest authentication using OTP with secure cookies.
+- Strong consistency for critical event operations (RSVP, guest updates, payments).
+- Production observability for incident response (logs, metrics, traces, Sentry).
+- Infrastructure-level safety (distributed rate limits, idempotency, webhook dedupe).
+- Decision support via intelligence modules (Relationship Priority Score live; RSVP Risk and Shagun Signal coming).
+
+Monorepo structure:
+
+- `app/` - Next.js App Router UI (host, organiser, public guest)
+- `services/api/` - Go API service (`handler -> service -> repository`)
+- `db/migrations/` - SQL schema and infra migrations
+- `lib/` - API clients, contracts, shared utilities
+- `.github/workflows/ci.yml` - CI pipeline
+
+## Architecture
+
+### System Design
+
+```text
+Users (Host / Guest / Organiser)
+        |
+        v
+Next.js Frontend (Vercel, frontend root)
+        |
+        v
+Go API (Gin, stateless)
+  |        |          |
+  |        |          +--> Sentry + Prometheus + OTel
+  |        |
+  |        +--> Redis (Upstash): distributed rate limits + async queue broker
+  |
+  +--> PostgreSQL (Neon): source of truth, transactional writes, indexed reads
+```
+
+### Backend layering
+
+- `httpserver` handles protocol, auth middleware, request parsing, error envelopes.
+- `service` contains business and intelligence logic.
+- `repository` isolates SQL, transactions, and persistence patterns.
+
+### Runtime model
+
+- Public endpoints (`/v1/public/...`) are traffic-heavy and protected with persistent limits.
+- Authenticated host endpoints (`/v1/events/:id/...`) use event-scoped RBAC.
+- Non-critical external side effects (OTP dispatch) run via async queue patterns.
+
+## Tech Stack
+
+### Frontend
+
+- Next.js 16 (App Router), React 19, TypeScript
+- Tailwind CSS v4
+- TanStack Query for server state
+- Zod contracts for runtime safety
+- Sentry (`@sentry/nextjs`)
+
+### Backend
+
+- Go 1.25+, Gin
+- PostgreSQL via `pgx`
+- SQL migrations via `golang-migrate`
+- Redis / Upstash (rate limiting + queue infra)
+- Asynq for background OTP dispatch
+- JWT + bcrypt auth
+- Prometheus metrics + OpenTelemetry middleware + `sentry-go`
+
+### Infrastructure
+
+- Frontend deploy: Vercel (`frontend` root in project config)
+- Backend deploy: Render/Fly (`render.yaml`, `fly.toml`)
+- Media: Cloudflare R2 (integration-ready)
+- CI: GitHub Actions
+
+## Scalability Features
+
+UTSAV includes practical scale controls needed for high-concurrency wedding/event workloads:
+
+- **Distributed rate limiting:** OTP request/verify and public RSVP routes use Redis-backed limits.
+- **Idempotent writes:** critical POST flows require `Idempotency-Key` to prevent duplicate execution.
+- **Async external calls:** OTP provider delivery is queue-dispatched with retry/circuit-breaker behavior.
+- **Webhook dedupe:** replay-safe delivery keys for payment webhooks.
+- **Pagination everywhere:** host list surfaces (`guests`, `rsvps`, `shagun`) support `limit/offset`.
+- **Scale-oriented indexing:** focused indexes on RSVP, OTP, guests, events, shagun query paths.
+- **Stateless API:** horizontal scaling via multiple backend instances with shared Redis/Postgres state.
+
+## Key Innovations
+
+### 1) Relationship Priority Score (live)
+
+A production intelligence feature that ranks guests by operational importance for event success:
+
+- Weighted model with normalized score (0-100)
+- Recency decay + uncertainty handling for sparse data
+- Tiers: `Critical`, `Important`, `Optional`
+- Demo output: top guests to personally call, guests needing attention, colored tier cards
+
+### 2) Reliability-first infra decisions
+
+- Persistent distributed controls over in-memory shortcuts
+- Hard fail-safe behavior in production config
+- Observability-first instrumentation for fast incident triage
+
+### 3) Decision-system direction
+
+UTSAV is built to evolve from a workflow app into an intelligence-backed operating system:
+
+- RSVP Risk Predictor (coming)
+- Shagun Signal Intelligence (coming)
+
+## Setup Instructions
 
 ### Prerequisites
 
@@ -32,7 +145,7 @@ It unifies host, guest, and organiser workflows into one system: OTP auth, RSVP,
 - Go 1.25+
 - Docker Desktop
 
-### 1) Start local Postgres
+### 1) Start local dependencies
 
 ```bash
 make docker-up
@@ -57,150 +170,7 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-## What’s in this Repository
-
-### Core product modules
-
-- Host auth (OTP + refresh)
-- Guest RSVP auth (OTP)
-- Event CRUD + sub-events + members
-- Guest management + CSV import
-- RSVP (public submit + host visibility)
-- Shagun (host logging + public report)
-- Gallery (presign/register/moderation/public)
-- Broadcasts (host/public)
-- Memory book (generate/public/export-gated)
-- Organiser profile + clients + event linking
-- Billing checkout + webhook pipeline
-
-### Monorepo structure
-
-- `app/` - Next.js routes (host, organiser, public guest)
-- `components/` - UI/domain components
-- `lib/` - API client, contracts, shared utils
-- `providers/` - app-level providers
-- `store/` - client state stores
-- `services/api/` - Go API service
-- `db/migrations/` - SQL migrations
-- `.github/workflows/ci.yml` - CI pipeline
-
-## Architecture
-
-### Backend layering
-
-- Handler: `services/api/internal/httpserver`
-- Service: `services/api/internal/service`
-- Repository: `services/api/internal/repository`
-
-### API shape
-
-- Versioned routes under `/v1`
-- Health endpoints: `/health`, `/v1/healthz`, `/v1/readyz`
-- Public routes: `/v1/public/...`
-- Host/organiser routes protected by auth middleware
-
-### Auth model
-
-- Host session: OTP -> httpOnly cookies (`utsav_access_token`, `utsav_refresh_token`)
-- Guest session: event-scoped guest token for RSVP/shagun flows
-- Event-scoped RBAC checks for host operations
-
-### System architecture diagram
-
-```text
-                           +----------------------+
-                           |   Users (Web/Mobile) |
-                           +----------+-----------+
-                                      |
-                                      v
-                           +----------------------+
-                           |  CDN / Edge / WAF    |
-                           |  (Cloudflare)        |
-                           +----------+-----------+
-                                      |
-                    +-----------------+-----------------+
-                    |                                   |
-                    v                                   v
-       +--------------------------+        +---------------------------+
-       | Next.js Frontend         |        | Public Asset Delivery     |
-       | (Vercel / Web Tier)      |        | (Cloudflare R2 + CDN)     |
-       +------------+-------------+        +---------------------------+
-                    |
-                    | HTTPS API Calls
-                    v
-       +--------------------------+      +-----------------------------+
-       | API Gateway / LB         |----->| Observability               |
-       | (Ingress, routing)       |      | (Logs, Metrics, Traces)     |
-       +------------+-------------+      +-----------------------------+
-                    |
-                    v
-       +--------------------------+        +---------------------------+
-       | Go API Service (Gin)     |<------>| Redis Cluster             |
-       | Stateless App Pods       |        | - Cache                   |
-       | (horizontal autoscale)   |        | - Rate Limit Counters     |
-       +------+---------+---------+        | - Queue Broker            |
-              |         |                  +-------------+-------------+
-              |         |                                |
-              |         |                                v
-              |         |                     +-------------------------+
-              |         +-------------------->| Async Workers           |
-              |                               | (OTP, media, fanout,    |
-              |                               | webhooks, exports)       |
-              |                               +-----------+-------------+
-              |                                           |
-              v                                           v
-   +--------------------------+                 +------------------------+
-   | PostgreSQL (Primary DB)  |<----------------| Write/Update Jobs      |
-   | - Transactions           |                 +------------------------+
-   | - Core relational data   |
-   +------------+-------------+
-                |
-                v
-   +--------------------------+
-   | Read Replicas (optional) |
-   | for heavy read endpoints |
-   +--------------------------+
-```
-
-### Data flow and scale notes
-
-- Read-heavy public endpoints use Redis caching before Postgres and serve media directly from R2/CDN.
-- Write paths (RSVP, guest operations) persist canonical data in Postgres and enqueue non-critical side effects.
-- OTP flow uses Redis for rate limiting and queue-backed async dispatch for provider calls.
-- Scaling is independent per tier: stateless API pods, worker pool by queue depth, and optional read replicas for DB-heavy reads.
-
-## Tech Stack
-
-### Frontend
-
-- Next.js 16, React 19, TypeScript
-- Tailwind CSS v4
-- TanStack Query
-- Zod + React Hook Form
-- Zustand
-- Sentry (`@sentry/nextjs`)
-
-### Backend
-
-- Go + Gin
-- PostgreSQL (`pgx`)
-- SQL migrations (`golang-migrate`)
-- JWT + bcrypt
-- Upstash Redis limiter + Redis-backed async OTP queue (Asynq)
-- Sentry (`sentry-go`)
-- Prometheus metrics + OTel Gin middleware
-
-## Production Hardening Included
-
-- Distributed rate limiting for OTP + RSVP flows
-- Async OTP dispatch with retry/circuit-breaker wrapper
-- Idempotency-key enforcement for critical write endpoints
-- Webhook replay dedupe for Razorpay events
-- Structured JSON logs with request/user/error context
-- Prometheus endpoint: `/metrics`
-- Route-group auth middleware to reduce handler-level auth drift
-
-## Local Validation Commands
+## Validation Commands
 
 ### Frontend
 
@@ -220,7 +190,7 @@ go vet ./...
 
 ## API Examples
 
-### Request OTP (host login)
+### Request OTP
 
 ```bash
 curl -X POST "http://localhost:8080/v1/auth/otp/request" \
@@ -228,7 +198,7 @@ curl -X POST "http://localhost:8080/v1/auth/otp/request" \
   -d '{"phone":"+919876543210"}'
 ```
 
-### Verify OTP (host login)
+### Verify OTP
 
 ```bash
 curl -X POST "http://localhost:8080/v1/auth/otp/verify" \
@@ -247,62 +217,37 @@ curl -X POST "http://localhost:8080/v1/public/events/<slug>/rsvp" \
   -d '{"items":[{"sub_event_id":"<uuid>","status":"yes"}]}'
 ```
 
-## Environment Variables
+### Relationship Priority Overview
 
-Use:
-
-- Frontend template: `.env.example`
-- Backend template: `services/api/.env.example`
-
-Critical production values include:
-
-- `DATABASE_URL`
-- `JWT_SECRET`
-- `CORS_ORIGIN`
-- `AUTH_COOKIE_DOMAIN`
-- `OTP_PROVIDER`, `OTP_API_KEY`, `OTP_SENDER_ID`
-- `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
-- `REDIS_URL` (async OTP queue)
-- `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN`
-- `NEXT_PUBLIC_API_URL`
+```bash
+curl -X GET "http://localhost:8080/v1/events/<event_id>/intelligence/relationship-priority" \
+  -H "Authorization: Bearer <host_access_token>"
+```
 
 ## Deployment
 
-- Frontend: Vercel (project root `./`)
-- Backend: Render or Fly (`render.yaml` / `fly.toml`)
-- Migrations: run in deploy startup via backend config (`RUN_MIGRATIONS=true`)
+- Frontend: Vercel (configured to deploy frontend app root)
+- Backend: Render/Fly with health check on `/health`
+- Migrations: backend startup-managed (`RUN_MIGRATIONS=true`) or release phase
 
-For full rollout steps, use:
+Production docs:
 
-- `docs/ROLLOUT_CHECKLIST_HARDENING.md`
 - `docs/PRODUCTION_INFRA.md`
+- `docs/ROLLOUT_CHECKLIST_HARDENING.md`
 - `docs/INFRA_VERIFICATION_CHECKLIST.md`
-
-## Contributing
-
-1. Create a feature branch from `main`.
-2. Keep changes scoped (one concern per PR).
-3. Run local checks before opening PR:
-   - `npm run lint`
-   - `npm run build`
-   - `cd services/api && go test ./...`
-4. Document infra-impacting changes in `docs/`.
-5. For API changes, update contracts and examples in the same PR.
 
 ## Troubleshooting
 
-- **`go: command not found`**
-  - Open a new terminal/session after installing Go and run `go version`.
-- **Frontend cannot reach API**
-  - Verify `NEXT_PUBLIC_API_URL` and CORS (`CORS_ORIGIN`) match the frontend origin.
-- **Auth loops on protected pages**
-  - Confirm backend sets `utsav_access_token` and `AUTH_COOKIE_DOMAIN` is correct for your domain setup.
-- **`npm run test:e2e` fails locally**
-  - Ensure frontend/API are running, then set `E2E_BASE_URL` (default `http://127.0.0.1:3000`).
-- **OTP not sending in production**
-  - Check `OTP_PROVIDER`, `OTP_API_KEY`, `OTP_SENDER_ID`, and `REDIS_URL` (for async queue mode).
-- **Rate limiting behaves like memory-only**
-  - Ensure `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are set.
+- **Go not found after install**
+  - Open a new terminal session and run `go version`.
+- **Frontend cannot call API**
+  - Verify `NEXT_PUBLIC_API_URL` and backend `CORS_ORIGIN`.
+- **Auth loops**
+  - Verify `AUTH_COOKIE_DOMAIN` and cookie settings for your host.
+- **OTP not delivered**
+  - Validate `OTP_PROVIDER`, `OTP_API_KEY`, `OTP_SENDER_ID`, `REDIS_URL`.
+- **Rate limits appear non-persistent**
+  - Validate `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
 
 ## License
 

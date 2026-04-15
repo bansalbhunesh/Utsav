@@ -253,6 +253,25 @@ func parseLimitOffset(c *gin.Context) (int, int) {
 	return limit, offset
 }
 
+func parseGuestListQuery(c *gin.Context) (sort string, priorityTier string) {
+	sort = strings.ToLower(strings.TrimSpace(c.Query("sort")))
+	switch sort {
+	case "", "name_asc", "name_desc", "priority_desc", "priority_asc", "rsvp_desc", "shagun_desc":
+	default:
+		sort = "name_asc"
+	}
+	if sort == "" {
+		sort = "name_asc"
+	}
+	priorityTier = strings.ToLower(strings.TrimSpace(c.Query("priority_tier")))
+	switch priorityTier {
+	case "", "critical", "important", "optional":
+	default:
+		priorityTier = ""
+	}
+	return sort, priorityTier
+}
+
 func hashFingerprint(parts ...string) string {
 	h := sha256.New()
 	for _, p := range parts {

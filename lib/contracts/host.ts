@@ -36,15 +36,35 @@ export const hostGuestSchema = z.object({
   id: z.string(),
   name: z.string(),
   phone: z.string(),
+  priority_score: z.number().optional().default(0),
+  priority_tier: z.string().optional().default('Optional'),
+  priority_reasons: z.array(z.string()).optional().default([]),
 })
 
 export const hostGuestsResponseSchema = z.object({
   guests: z.array(hostGuestSchema).default([]),
+  limit: z.number().optional().default(50),
+  offset: z.number().optional().default(0),
+  sort: z.string().optional().default('name_asc'),
+  priority_tier: z.string().optional().default(''),
 })
 
 export const hostGuestsImportResponseSchema = z.object({
   imported: z.number(),
   errors: z.array(z.object({ line: z.number(), error: z.string() })).default([]),
+})
+
+export const hostRelationshipPriorityOverviewSchema = z.object({
+  feature: z.string(),
+  status: z.string(),
+  ranked_guests: z.array(hostGuestSchema).default([]),
+  guests_needing_attention: z.array(hostGuestSchema).default([]),
+  tier_counts: z.object({
+    critical: z.number().optional().default(0),
+    important: z.number().optional().default(0),
+    optional: z.number().optional().default(0),
+  }),
+  coming_next: z.array(z.string()).default([]),
 })
 
 export const hostSubEventSchema = z.object({
@@ -176,6 +196,10 @@ export function parseHostGuestsResponse(input: unknown) {
 
 export function parseHostGuestsImportResponse(input: unknown) {
   return hostGuestsImportResponseSchema.parse(input)
+}
+
+export function parseHostRelationshipPriorityOverview(input: unknown) {
+  return hostRelationshipPriorityOverviewSchema.parse(input)
 }
 
 export function parseHostSubEventsResponse(input: unknown) {

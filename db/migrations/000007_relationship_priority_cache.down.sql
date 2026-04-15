@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS idx_guest_relationship_scores_event_tier_score;
+DROP INDEX IF EXISTS idx_guest_relationship_scores_event_score;
+DROP TABLE IF EXISTS guest_relationship_scores;

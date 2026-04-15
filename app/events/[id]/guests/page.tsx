@@ -1,37 +1,121 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { usePathname, useParams, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getUserFacingError } from "@/lib/error-messages";
 import {
   parseHostGuestsImportResponse,
+  parseHostRelationshipPriorityOverview,
   parseHostGuestsResponse,
 } from "@/lib/contracts/host";
 
-type Guest = { id: string; name: string; phone: string };
+type Guest = {
+  id: string;
+  name: string;
+  phone: string;
+  priority_score?: number;
+  priority_tier?: string;
+  priority_reasons?: string[];
+};
 
 export default function GuestsPage() {
   const { id } = useParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const eventId = String(id || "");
+  const sort = searchParams.get("sort") || "priority_desc";
+  const priorityTier = searchParams.get("priority_tier") || "";
+  const limitRaw = Number(searchParams.get("limit") || "20");
+  const offsetRaw = Number(searchParams.get("offset") || "0");
+  const limit = [20, 50, 100].includes(limitRaw) ? limitRaw : 20;
+  const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? offsetRaw : 0;
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [csv, setCsv] = useState("name,phone\nPriya,+919876543210");
   const [importMsg, setImportMsg] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
+  const [copyMsg, setCopyMsg] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
+  function updateQuery(updates: Record<string, string | number | null>) {
+    const params = new URLSearchParams(searchParams.toString());
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value === null || value === "") {
+        params.delete(key);
+      } else {
+        params.set(key, String(value));
+      }
+    });
+    const next = params.toString();
+    router.replace(next ? `${pathname}?${next}` : pathname);
+  }
+
+  async function copyViewLink() {
+    try {
+      const query = searchParams.toString();
+      const relative = query ? `${pathname}?${query}` : pathname;
+      const absolute = typeof window !== "undefined" ? new URL(relative, window.location.origin).toString() : relative;
+      await navigator.clipboard.writeText(absolute);
+      setCopyMsg("View link copied");
+    } catch {
+      setCopyMsg("Failed to copy link");
+    }
+    setTimeout(() => setCopyMsg(null), 1500);
+  }
+
   const { data, error } = useQuery({
-    queryKey: ["event-guests", eventId],
+    queryKey: ["event-guests", eventId, sort, priorityTier, limit, offset],
     queryFn: async () => {
-      const raw = await apiFetch<unknown>(`/v1/events/${eventId}/guests`);
+      const params = new URLSearchParams();
+      params.set("sort", sort);
+      params.set("limit", String(limit));
+      params.set("offset", String(offset));
+      if (priorityTier) params.set("priority_tier", priorityTier);
+      const raw = await apiFetch<unknown>(
+        `/v1/events/${eventId}/guests?${params.toString()}`,
+      );
       return parseHostGuestsResponse(raw);
     },
   });
+  const { data: relationshipOverview } = useQuery({
+    queryKey: ["relationship-priority-overview", eventId],
+    queryFn: async () => {
+      const raw = await apiFetch<unknown>(
+        `/v1/events/${eventId}/intelligence/relationship-priority`,
+      );
+      return parseHostRelationshipPriorityOverview(raw);
+    },
+  });
   const guests: Guest[] = data?.guests || [];
+  const pageOffset = data?.offset ?? offset;
+  const pageLimit = data?.limit ?? limit;
+  const hasPrev = pageOffset > 0;
+  const hasNext = guests.length >= pageLimit;
   const err = error ? getUserFacingError(error, "Failed to load guests.") : actionErr;
+
+  const tierCard = relationshipOverview?.tier_counts ?? {
+    critical: 0,
+    important: 0,
+    optional: 0,
+  };
+
+  function tierClass(tier: string | undefined) {
+    switch ((tier || "").toLowerCase()) {
+      case "critical":
+        return "border-rose-500/40 bg-rose-500/10 text-rose-200";
+      case "important":
+        return "border-amber-500/40 bg-amber-500/10 text-amber-200";
+      case "normal":
+        return "border-sky-500/40 bg-sky-500/10 text-sky-200";
+      case "optional":
+      default:
+        return "border-zinc-600/40 bg-zinc-700/20 text-zinc-300";
+    }
+  }
 
   const addGuestMutation = useMutation({
     mutationFn: async () =>
@@ -85,6 +169,105 @@ export default function GuestsPage() {
         ← Event
       </Link>
       <h1 className="text-xl font-semibold text-white">Guests</h1>
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
+        <h2 className="text-sm font-medium text-zinc-400">Relationship Priority Score</h2>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+          <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-rose-200">
+            Critical: {tierCard.critical}
+          </div>
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-200">
+            Important: {tierCard.important}
+          </div>
+          <div className="rounded-lg border border-zinc-600/40 bg-zinc-700/20 px-3 py-2 text-zinc-300">
+            Optional: {tierCard.optional}
+          </div>
+        </div>
+        <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
+          <p className="text-xs font-medium text-zinc-400">Top 15 guests to personally call</p>
+          <ul className="mt-2 space-y-2 text-sm">
+            {(relationshipOverview?.ranked_guests || []).slice(0, 15).map((g, i) => (
+              <li key={g.id} className="flex items-center justify-between rounded-md border border-zinc-800 px-2 py-1.5">
+                <span className="text-zinc-200">
+                  #{i + 1} {g.name}
+                </span>
+                <span className={`rounded-full border px-2 py-0.5 text-xs ${tierClass(g.priority_tier)}`}>
+                  {g.priority_tier || "Low"} · {g.priority_score ?? 0}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-4 text-xs font-medium text-zinc-400">Guests needing attention</p>
+          <ul className="mt-2 space-y-2 text-sm">
+            {(relationshipOverview?.guests_needing_attention || []).slice(0, 10).map((g) => (
+              <li key={`attention-${g.id}`} className="flex items-center justify-between rounded-md border border-zinc-800 px-2 py-1.5">
+                <span className="text-zinc-200">{g.name}</span>
+                <span className={`rounded-full border px-2 py-0.5 text-xs ${tierClass(g.priority_tier)}`}>
+                  {g.priority_tier || "Optional"} · {g.priority_score ?? 0}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {relationshipOverview?.coming_next?.length ? (
+            <p className="mt-3 text-xs text-zinc-500">
+              Coming: {relationshipOverview.coming_next.join(", ")}
+            </p>
+          ) : null}
+          <div className="mt-3 rounded-md border border-zinc-800 p-2 text-xs text-zinc-500">
+            <p>Coming next: RSVP Risk Predictor (T-7 nudge, T-3 reminder, T-1 call suggestion).</p>
+            <p className="mt-1">Coming next: Shagun Signal Intelligence (median +/- IQR expected range, outlier flags).</p>
+          </div>
+        </div>
+      </section>
+      <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
+        <h2 className="text-sm font-medium text-zinc-400">Priority sorting</h2>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <select
+            value={sort}
+            onChange={(e) => {
+              updateQuery({ sort: e.target.value, offset: 0 });
+            }}
+            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white"
+          >
+            <option value="priority_desc">Priority (high to low)</option>
+            <option value="priority_asc">Priority (low to high)</option>
+            <option value="name_asc">Name (A to Z)</option>
+            <option value="name_desc">Name (Z to A)</option>
+            <option value="rsvp_desc">RSVP commitment</option>
+            <option value="shagun_desc">Shagun signal</option>
+          </select>
+          <select
+            value={priorityTier}
+            onChange={(e) => {
+              updateQuery({ priority_tier: e.target.value, offset: 0 });
+            }}
+            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white"
+          >
+            <option value="">All tiers</option>
+            <option value="critical">Critical</option>
+            <option value="important">Important</option>
+            <option value="optional">Optional</option>
+          </select>
+          <select
+            value={limit}
+            onChange={(e) => {
+              updateQuery({ limit: Number(e.target.value), offset: 0 });
+            }}
+            className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white"
+          >
+            <option value={20}>20 / page</option>
+            <option value={50}>50 / page</option>
+            <option value={100}>100 / page</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => void copyViewLink()}
+            className="rounded-lg border border-zinc-700 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-800"
+          >
+            Copy view link
+          </button>
+        </div>
+        {copyMsg && <p className="mt-2 text-xs text-emerald-400">{copyMsg}</p>}
+      </section>
       <section className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
         <h2 className="text-sm font-medium text-zinc-400">CSV import</h2>
         <p className="mt-1 text-xs text-zinc-500">
@@ -145,10 +328,46 @@ export default function GuestsPage() {
         </button>
       </div>
       {err && <p className="text-sm text-red-400">{err}</p>}
+      <div className="flex items-center justify-between text-xs text-zinc-400">
+        <p>
+          Showing {guests.length === 0 ? 0 : pageOffset + 1}-
+          {pageOffset + guests.length}
+        </p>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={!hasPrev}
+            onClick={() => updateQuery({ offset: Math.max(0, pageOffset - pageLimit) })}
+            className="rounded-lg border border-zinc-700 px-3 py-1 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            disabled={!hasNext}
+            onClick={() => updateQuery({ offset: pageOffset + pageLimit })}
+            className="rounded-lg border border-zinc-700 px-3 py-1 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
+      </div>
       <ul className="space-y-2 text-sm">
         {guests.map((g) => (
           <li key={g.id} className="rounded border border-zinc-800 px-3 py-2 text-zinc-200">
-            {g.name} — {g.phone}
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                {g.name} — {g.phone}
+              </div>
+              <div className={`rounded-full border px-2 py-0.5 text-xs ${tierClass(g.priority_tier)}`}>
+                {g.priority_tier || "Optional"} · {g.priority_score ?? 0}
+              </div>
+            </div>
+            {g.priority_reasons && g.priority_reasons.length > 0 && (
+              <p className="mt-1 text-xs text-zinc-400">
+                {g.priority_reasons.slice(0, 2).join(" | ")}
+              </p>
+            )}
           </li>
         ))}
       </ul>

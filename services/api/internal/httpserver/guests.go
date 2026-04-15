@@ -34,12 +34,46 @@ func (s *Server) listGuests(c *gin.Context) {
 		return
 	}
 	limit, offset := parseLimitOffset(c)
-	list, svcErr := s.GuestService.ListGuests(c.Request.Context(), eventID, limit, offset)
+	sort, priorityTier := parseGuestListQuery(c)
+	list, svcErr := s.GuestService.ListGuests(c.Request.Context(), eventID, limit, offset, sort, priorityTier)
 	if svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"guests": list, "limit": limit, "offset": offset})
+	c.JSON(http.StatusOK, gin.H{
+		"guests": list, "limit": limit, "offset": offset, "sort": sort, "priority_tier": priorityTier,
+	})
+}
+
+func (s *Server) getRelationshipPriorityOverview(c *gin.Context) {
+	_, eventID, role, ok := s.requireEventAccess(c)
+	if !ok {
+		return
+	}
+	if !roleCanManageEventData(role) {
+		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You do not have permission to view guest intelligence.")
+		return
+	}
+	if s.GuestService == nil {
+		writeAPIError(c, http.StatusInternalServerError, "GUEST_SERVICE_UNAVAILABLE", "Guest service unavailable.")
+		return
+	}
+	overview, svcErr := s.GuestService.RelationshipScoreOverview(c.Request.Context(), eventID)
+	if svcErr != nil {
+		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"feature":                  "relationship_priority_score",
+		"status":                   "active",
+		"ranked_guests":            overview.RankedGuests,
+		"guests_needing_attention": overview.GuestsNeedingAttention,
+		"tier_counts":              overview.TierCounts,
+		"coming_next": []string{
+			"rsvp_risk_predictor",
+			"shagun_signal_intelligence",
+		},
+	})
 }
 
 func (s *Server) postGuest(c *gin.Context) {
