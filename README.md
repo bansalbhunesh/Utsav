@@ -105,6 +105,70 @@ Open `http://localhost:3000`.
 - Guest session: event-scoped guest token for RSVP/shagun flows
 - Event-scoped RBAC checks for host operations
 
+### System architecture diagram
+
+```text
+                           +----------------------+
+                           |   Users (Web/Mobile) |
+                           +----------+-----------+
+                                      |
+                                      v
+                           +----------------------+
+                           |  CDN / Edge / WAF    |
+                           |  (Cloudflare)        |
+                           +----------+-----------+
+                                      |
+                    +-----------------+-----------------+
+                    |                                   |
+                    v                                   v
+       +--------------------------+        +---------------------------+
+       | Next.js Frontend         |        | Public Asset Delivery     |
+       | (Vercel / Web Tier)      |        | (Cloudflare R2 + CDN)     |
+       +------------+-------------+        +---------------------------+
+                    |
+                    | HTTPS API Calls
+                    v
+       +--------------------------+      +-----------------------------+
+       | API Gateway / LB         |----->| Observability               |
+       | (Ingress, routing)       |      | (Logs, Metrics, Traces)     |
+       +------------+-------------+      +-----------------------------+
+                    |
+                    v
+       +--------------------------+        +---------------------------+
+       | Go API Service (Gin)     |<------>| Redis Cluster             |
+       | Stateless App Pods       |        | - Cache                   |
+       | (horizontal autoscale)   |        | - Rate Limit Counters     |
+       +------+---------+---------+        | - Queue Broker            |
+              |         |                  +-------------+-------------+
+              |         |                                |
+              |         |                                v
+              |         |                     +-------------------------+
+              |         +-------------------->| Async Workers           |
+              |                               | (OTP, media, fanout,    |
+              |                               | webhooks, exports)       |
+              |                               +-----------+-------------+
+              |                                           |
+              v                                           v
+   +--------------------------+                 +------------------------+
+   | PostgreSQL (Primary DB)  |<----------------| Write/Update Jobs      |
+   | - Transactions           |                 +------------------------+
+   | - Core relational data   |
+   +------------+-------------+
+                |
+                v
+   +--------------------------+
+   | Read Replicas (optional) |
+   | for heavy read endpoints |
+   +--------------------------+
+```
+
+### Data flow and scale notes
+
+- Read-heavy public endpoints use Redis caching before Postgres and serve media directly from R2/CDN.
+- Write paths (RSVP, guest operations) persist canonical data in Postgres and enqueue non-critical side effects.
+- OTP flow uses Redis for rate limiting and queue-backed async dispatch for provider calls.
+- Scaling is independent per tier: stateless API pods, worker pool by queue depth, and optional read replicas for DB-heavy reads.
+
 ## Tech Stack
 
 ### Frontend
