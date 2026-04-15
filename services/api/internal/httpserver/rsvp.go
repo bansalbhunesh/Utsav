@@ -144,5 +144,8 @@ func (s *Server) postPublicRSVP(c *gin.Context) {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
+	if s.GuestService != nil {
+		s.GuestService.InvalidateRelationshipOverview(c.Request.Context(), eidSlug)
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

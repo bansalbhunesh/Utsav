@@ -92,7 +92,7 @@ func Load() (*Config, error) {
 		Env:                      env,
 		JWTSecret:                secret,
 		OTPSecret:                otpSecret,
-		DevOTPCode:               getenv("DEV_OTP_CODE", "123456"),
+		DevOTPCode:               getenv("DEV_OTP_CODE", ""),
 		OTPProvider:              getenv("OTP_PROVIDER", ""),
 		OTPAPIKey:                getenv("OTP_API_KEY", ""),
 		OTPAPISecret:             getenv("OTP_API_SECRET", ""),

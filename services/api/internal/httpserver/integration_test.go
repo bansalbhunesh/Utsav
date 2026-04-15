@@ -55,7 +55,7 @@ func TestMigrationsAgainstPostgresContainer(t *testing.T) {
 		t.Fatalf("migrate up: %v", err)
 	}
 
-	pool, err := db.Connect(ctx, dsn)
+	pool, err := db.Connect(ctx, dsn, true)
 	if err != nil {
 		t.Fatalf("connect postgres: %v", err)
 	}

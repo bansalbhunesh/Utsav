@@ -21,7 +21,9 @@ type InMemoryLimiter struct {
 }
 
 func NewInMemoryLimiter(max int, window time.Duration) *InMemoryLimiter {
-	return &InMemoryLimiter{win: New(max, window)}
+	w := New(max, window)
+	w.StartPeriodicCleanup(5 * time.Minute)
+	return &InMemoryLimiter{win: w}
 }
 
 func (l *InMemoryLimiter) Allow(_ context.Context, key string) (bool, error) {

@@ -12,6 +12,44 @@ import {
   parseHostGuestsResponse,
 } from "@/lib/contracts/host";
 
+const GUEST_CURSOR_STACK_PREFIX = "utsav:guestCursorStack:";
+
+function guestCursorStackKey(eventId: string, sort: string, limit: number) {
+  return `${GUEST_CURSOR_STACK_PREFIX}${eventId}:${sort}:${limit}`;
+}
+
+function readGuestCursorStack(key: string): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return [];
+    const v = JSON.parse(raw) as unknown;
+    return Array.isArray(v) ? v.map((x) => String(x)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeGuestCursorStack(key: string, stack: string[]) {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(key, JSON.stringify(stack));
+}
+
+function clearGuestCursorStack(key: string) {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(key);
+}
+
+/** Clear all cursor stacks for an event (sort/limit changes, new data). */
+function clearAllGuestCursorStacksForEvent(eventId: string) {
+  if (typeof window === "undefined") return;
+  const prefix = `${GUEST_CURSOR_STACK_PREFIX}${eventId}:`;
+  for (let i = sessionStorage.length - 1; i >= 0; i--) {
+    const k = sessionStorage.key(i);
+    if (k?.startsWith(prefix)) sessionStorage.removeItem(k);
+  }
+}
+
 type Guest = {
   id: string;
   name: string;
@@ -33,6 +71,10 @@ export default function GuestsPage() {
   const offsetRaw = Number(searchParams.get("offset") || "0");
   const limit = [20, 50, 100].includes(limitRaw) ? limitRaw : 20;
   const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? offsetRaw : 0;
+  const cursorParam = searchParams.get("cursor") ?? "";
+  const supportsCursor =
+    !priorityTier && sort !== "priority_desc" && sort !== "priority_asc";
+  const stackKey = guestCursorStackKey(eventId, sort, limit);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [csv, setCsv] = useState("name,phone\nPriya,+919876543210");
@@ -68,12 +110,18 @@ export default function GuestsPage() {
   }
 
   const { data, error } = useQuery({
-    queryKey: ["event-guests", eventId, sort, priorityTier, limit, offset],
+    queryKey: supportsCursor
+      ? ["event-guests", eventId, sort, priorityTier, limit, cursorParam]
+      : ["event-guests", eventId, sort, priorityTier, limit, offset],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("sort", sort);
       params.set("limit", String(limit));
-      params.set("offset", String(offset));
+      if (supportsCursor && cursorParam) {
+        params.set("cursor", cursorParam);
+      } else {
+        params.set("offset", String(offset));
+      }
       if (priorityTier) params.set("priority_tier", priorityTier);
       const raw = await apiFetch<unknown>(
         `/v1/events/${eventId}/guests?${params.toString()}`,
@@ -93,8 +141,23 @@ export default function GuestsPage() {
   const guests: Guest[] = data?.guests || [];
   const pageOffset = data?.offset ?? offset;
   const pageLimit = data?.limit ?? limit;
-  const hasPrev = pageOffset > 0;
-  const hasNext = guests.length >= pageLimit;
+  const stackDepth = supportsCursor ? readGuestCursorStack(stackKey).length : 0;
+  const displayStart =
+    supportsCursor && cursorParam
+      ? stackDepth * pageLimit + 1
+      : guests.length === 0
+        ? 0
+        : pageOffset + 1;
+  const displayEnd =
+    supportsCursor && cursorParam
+      ? stackDepth * pageLimit + guests.length
+      : pageOffset + guests.length;
+  const hasPrev = supportsCursor
+    ? Boolean(cursorParam)
+    : pageOffset > 0;
+  const hasNext = supportsCursor
+    ? Boolean(data?.next_cursor)
+    : guests.length >= pageLimit;
   const err = error ? getUserFacingError(error, "Failed to load guests.") : actionErr;
 
   const tierCard = relationshipOverview?.tier_counts ?? {
@@ -126,6 +189,7 @@ export default function GuestsPage() {
     onSuccess: async () => {
       setName("");
       setPhone("");
+      clearAllGuestCursorStacksForEvent(eventId);
       await queryClient.invalidateQueries({ queryKey: ["event-guests", eventId] });
     },
   });
@@ -140,6 +204,7 @@ export default function GuestsPage() {
     },
     onSuccess: async (d) => {
       setImportMsg(`Imported ${d.imported}. Row errors: ${d.errors?.length ?? 0}.`);
+      clearAllGuestCursorStacksForEvent(eventId);
       await queryClient.invalidateQueries({ queryKey: ["event-guests", eventId] });
     },
   });
@@ -224,7 +289,8 @@ export default function GuestsPage() {
           <select
             value={sort}
             onChange={(e) => {
-              updateQuery({ sort: e.target.value, offset: 0 });
+              clearAllGuestCursorStacksForEvent(eventId);
+              updateQuery({ sort: e.target.value, offset: 0, cursor: null });
             }}
             className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white"
           >
@@ -238,7 +304,8 @@ export default function GuestsPage() {
           <select
             value={priorityTier}
             onChange={(e) => {
-              updateQuery({ priority_tier: e.target.value, offset: 0 });
+              clearAllGuestCursorStacksForEvent(eventId);
+              updateQuery({ priority_tier: e.target.value, offset: 0, cursor: null });
             }}
             className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white"
           >
@@ -250,7 +317,8 @@ export default function GuestsPage() {
           <select
             value={limit}
             onChange={(e) => {
-              updateQuery({ limit: Number(e.target.value), offset: 0 });
+              clearAllGuestCursorStacksForEvent(eventId);
+              updateQuery({ limit: Number(e.target.value), offset: 0, cursor: null });
             }}
             className="rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-white"
           >
@@ -330,14 +398,30 @@ export default function GuestsPage() {
       {err && <p className="text-sm text-red-400">{err}</p>}
       <div className="flex items-center justify-between text-xs text-zinc-400">
         <p>
-          Showing {guests.length === 0 ? 0 : pageOffset + 1}-
-          {pageOffset + guests.length}
+          Showing {displayStart}-{displayEnd}
+          {supportsCursor && cursorParam ? (
+            <span className="text-zinc-500"> · keyset pages</span>
+          ) : null}
         </p>
         <div className="flex gap-2">
           <button
             type="button"
             disabled={!hasPrev}
-            onClick={() => updateQuery({ offset: Math.max(0, pageOffset - pageLimit) })}
+            onClick={() => {
+              if (supportsCursor && cursorParam) {
+                const st = readGuestCursorStack(stackKey);
+                if (st.length === 0) {
+                  clearGuestCursorStack(stackKey);
+                  updateQuery({ cursor: null, offset: 0 });
+                  return;
+                }
+                const prev = st.pop()!;
+                writeGuestCursorStack(stackKey, st);
+                updateQuery({ cursor: prev === "" ? null : prev, offset: 0 });
+                return;
+              }
+              updateQuery({ offset: Math.max(0, pageOffset - pageLimit) });
+            }}
             className="rounded-lg border border-zinc-700 px-3 py-1 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Previous
@@ -345,7 +429,16 @@ export default function GuestsPage() {
           <button
             type="button"
             disabled={!hasNext}
-            onClick={() => updateQuery({ offset: pageOffset + pageLimit })}
+            onClick={() => {
+              if (supportsCursor && data?.next_cursor) {
+                const st = readGuestCursorStack(stackKey);
+                st.push(cursorParam);
+                writeGuestCursorStack(stackKey, st);
+                updateQuery({ cursor: data.next_cursor, offset: null });
+                return;
+              }
+              updateQuery({ offset: pageOffset + pageLimit });
+            }}
             className="rounded-lg border border-zinc-700 px-3 py-1 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Next

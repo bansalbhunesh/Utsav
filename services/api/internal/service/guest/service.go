@@ -2,21 +2,24 @@ package guestservice
 
 import (
 	"context"
-	"math"
+	"encoding/json"
+	"errors"
 	"net/http"
 	sortutil "sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/bhune/utsav/services/api/internal/cache"
 	"github.com/bhune/utsav/services/api/internal/repository/guestrepo"
 )
 
 // guestListPrefetchMax caps how many guests we load when ordering or filtering must match
-// scoreGuestPriority() (tier filter, or priority sort — OFFSET must apply after Go ordering).
+// SQL-computed priority (tier filter, or priority sort — OFFSET must apply after ordering).
 const guestListPrefetchMax = 10000
+
+const relationshipOverviewCacheTTL = 5 * time.Minute
 
 type ServiceError struct {
 	Status  int
@@ -27,7 +30,8 @@ type ServiceError struct {
 func (e *ServiceError) Error() string { return e.Message }
 
 type Service struct {
-	repo guestrepo.Repository
+	repo  guestrepo.Repository
+	cache cache.Cache
 }
 
 type RelationshipScoreOverview struct {
@@ -36,16 +40,29 @@ type RelationshipScoreOverview struct {
 	TierCounts             map[string]int    `json:"tier_counts"`
 }
 
-func NewService(repo guestrepo.Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo guestrepo.Repository, c cache.Cache) *Service {
+	return &Service{repo: repo, cache: c}
 }
 
-func applyGuestPriorityScores(list []guestrepo.Guest) {
+func relationshipOverviewCacheKey(eventID uuid.UUID) string {
+	return "rel_score_overview:" + eventID.String()
+}
+
+func tierLabelFromScore(score int) string {
+	switch {
+	case score >= 80:
+		return "Critical"
+	case score >= 50:
+		return "Important"
+	default:
+		return "Optional"
+	}
+}
+
+func applyGuestPriorityFromSQL(list []guestrepo.Guest) {
 	for i := range list {
-		score, tier, reasons := scoreGuestPriority(list[i])
-		list[i].PriorityScore = score
-		list[i].PriorityTier = tier
-		list[i].PriorityReasons = reasons
+		list[i].PriorityTier = tierLabelFromScore(list[i].PriorityScore)
+		list[i].PriorityReasons = []string{}
 	}
 }
 
@@ -75,7 +92,17 @@ func paginateGuests(list []guestrepo.Guest, offset, limit int) []guestrepo.Guest
 	return list[offset:end]
 }
 
-func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int, sort, priorityTier string) ([]guestrepo.Guest, *ServiceError) {
+func normalizeListSort(sort string) string {
+	switch strings.ToLower(strings.TrimSpace(sort)) {
+	case "name_desc", "priority_asc", "priority_desc", "rsvp_desc", "shagun_desc":
+		return strings.ToLower(strings.TrimSpace(sort))
+	default:
+		return "name_asc"
+	}
+}
+
+// ListGuests returns guests and an opaque next_cursor when another page exists (keyset path only).
+func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int, sort, priorityTier string, cursorStr *string) ([]guestrepo.Guest, *string, *ServiceError) {
 	tierFilter := strings.ToLower(strings.TrimSpace(priorityTier))
 	switch tierFilter {
 	case "critical", "important", "optional":
@@ -83,14 +110,31 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 		tierFilter = ""
 	}
 
-	if tierFilter != "" {
-		list, err := s.repo.ListGuests(ctx, eventID, guestListPrefetchMax, 0, sort)
+	sortNorm := normalizeListSort(sort)
+
+	var decoded *guestrepo.ListGuestsCursor
+	if cursorStr != nil && strings.TrimSpace(*cursorStr) != "" {
+		c, err := guestrepo.DecodeListGuestsCursor(*cursorStr)
 		if err != nil {
-			return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
+			return nil, nil, &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_CURSOR", Message: "Invalid or malformed guest list cursor."}
 		}
-		applyGuestPriorityScores(list)
-		if sort == "priority_desc" || sort == "priority_asc" {
-			sortGuestsByPriority(list, sort)
+		if normalizeListSort(c.Sort) != sortNorm {
+			return nil, nil, &ServiceError{Status: http.StatusBadRequest, Code: "CURSOR_SORT_MISMATCH", Message: "Cursor does not match the requested sort parameter."}
+		}
+		decoded = &c
+	}
+
+	if tierFilter != "" {
+		if decoded != nil {
+			return nil, nil, &ServiceError{Status: http.StatusBadRequest, Code: "CURSOR_NOT_SUPPORTED", Message: "Cursor pagination is not supported when priority_tier is set."}
+		}
+		list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{EventID: eventID, Limit: guestListPrefetchMax, Offset: 0, Sort: sort})
+		if err != nil {
+			return nil, nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
+		}
+		applyGuestPriorityFromSQL(list)
+		if sortNorm == "priority_desc" || sortNorm == "priority_asc" {
+			sortGuestsByPriority(list, sortNorm)
 		}
 		filtered := make([]guestrepo.Guest, 0, len(list))
 		for _, g := range list {
@@ -98,32 +142,87 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 				filtered = append(filtered, g)
 			}
 		}
-		return paginateGuests(filtered, offset, limit), nil
+		return paginateGuests(filtered, offset, limit), nil, nil
 	}
 
-	if sort == "priority_desc" || sort == "priority_asc" {
-		list, err := s.repo.ListGuests(ctx, eventID, guestListPrefetchMax, 0, sort)
-		if err != nil {
-			return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
+	if sortNorm == "priority_desc" || sortNorm == "priority_asc" {
+		if decoded != nil {
+			return nil, nil, &ServiceError{Status: http.StatusBadRequest, Code: "CURSOR_NOT_SUPPORTED", Message: "Cursor pagination is not supported for priority sort; use offset or omit sort=priority_*."}
 		}
-		applyGuestPriorityScores(list)
-		sortGuestsByPriority(list, sort)
-		return paginateGuests(list, offset, limit), nil
+		list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{EventID: eventID, Limit: guestListPrefetchMax, Offset: 0, Sort: sort})
+		if err != nil {
+			return nil, nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
+		}
+		applyGuestPriorityFromSQL(list)
+		sortGuestsByPriority(list, sortNorm)
+		return paginateGuests(list, offset, limit), nil, nil
 	}
 
-	list, err := s.repo.ListGuests(ctx, eventID, limit, offset, sort)
-	if err != nil {
-		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
+	if decoded != nil && offset > 0 {
+		offset = 0
 	}
-	applyGuestPriorityScores(list)
-	return list, nil
+
+	fetch := limit + 1
+	if fetch > 10000 {
+		fetch = 10000
+	}
+	list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{
+		EventID: eventID,
+		Limit:   fetch,
+		Offset:  offset,
+		Sort:    sort,
+		Cursor:  decoded,
+	})
+	if err != nil {
+		return nil, nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
+	}
+	applyGuestPriorityFromSQL(list)
+
+	hasMore := len(list) > limit
+	if hasMore {
+		list = list[:limit]
+	}
+	var next *string
+	if hasMore && limit > 0 {
+		last := list[len(list)-1]
+		cur := guestrepo.CursorFromGuestRow(sortNorm, last)
+		if enc, err := guestrepo.EncodeListGuestsCursor(cur); err == nil {
+			next = &enc
+		}
+	}
+	return list, next, nil
 }
 
 func (s *Service) RelationshipScoreOverview(ctx context.Context, eventID uuid.UUID) (*RelationshipScoreOverview, *ServiceError) {
-	ranked, svcErr := s.ListGuests(ctx, eventID, 200, 0, "priority_desc", "")
+	if s.cache != nil {
+		key := relationshipOverviewCacheKey(eventID)
+		b, err := s.cache.Get(ctx, key)
+		if err == nil {
+			var o RelationshipScoreOverview
+			if json.Unmarshal(b, &o) == nil {
+				return &o, nil
+			}
+		} else if !errors.Is(err, cache.ErrMiss) {
+			// fall through to DB
+		}
+	}
+
+	ranked, _, svcErr := s.ListGuests(ctx, eventID, 200, 0, "priority_desc", "", nil)
 	if svcErr != nil {
 		return nil, svcErr
 	}
+	out := buildRelationshipOverview(ranked)
+
+	if s.cache != nil {
+		key := relationshipOverviewCacheKey(eventID)
+		if raw, err := json.Marshal(out); err == nil {
+			_ = s.cache.Set(ctx, key, raw, relationshipOverviewCacheTTL)
+		}
+	}
+	return out, nil
+}
+
+func buildRelationshipOverview(ranked []guestrepo.Guest) *RelationshipScoreOverview {
 	top := ranked
 	if len(top) > 15 {
 		top = top[:15]
@@ -156,121 +255,15 @@ func (s *Service) RelationshipScoreOverview(ctx context.Context, eventID uuid.UU
 		RankedGuests:           top,
 		GuestsNeedingAttention: attention,
 		TierCounts:             counts,
-	}, nil
-}
-
-func scoreGuestPriority(g guestrepo.Guest) (int, string, []string) {
-	reasons := make([]string, 0, 6)
-
-	relationshipWeight := relationshipScore(g.Relationship)
-	rsvpCommitment := clamp01(float64(g.RSVPYesCount) / 3.0)
-	responseSpeed := 0.0
-	if g.LastRSVPAt != nil {
-		ageDays := time.Since(*g.LastRSVPAt).Hours() / 24.0
-		responseSpeed = clamp01(1.0 - (ageDays / 14.0))
-	}
-	eventCoverage := 0.0
-	if g.SubEventTotal > 0 {
-		eventCoverage = clamp01(float64(g.RSVPTotal) / float64(g.SubEventTotal))
-	}
-	historicalReliability := 0.0
-	if g.RSVPTotal > 0 {
-		historicalReliability = clamp01(float64(g.RSVPYesCount) / float64(g.RSVPTotal))
-	}
-	hostOverride := hostOverrideFromTags(g.Tags)
-
-	base := (0.30 * relationshipWeight) +
-		(0.20 * rsvpCommitment) +
-		(0.15 * responseSpeed) +
-		(0.15 * eventCoverage) +
-		(0.10 * historicalReliability) +
-		(0.10 * hostOverride)
-
-	decay := 0.90
-	if g.LastRSVPAt != nil {
-		ageDays := time.Since(*g.LastRSVPAt).Hours() / 24.0
-		decay = 0.75 + (0.25 * math.Exp(-ageDays/30.0))
-	}
-	missing := 0
-	if g.RSVPTotal == 0 {
-		missing += 3
-	}
-	if g.SubEventTotal == 0 {
-		missing++
-	}
-	uncertainty := 1.0 - (0.08 * float64(missing))
-	if uncertainty < 0.70 {
-		uncertainty = 0.70
-	}
-	score := int(math.Round(100.0 * base * decay * uncertainty))
-	if score < 0 {
-		score = 0
-	}
-	if score > 100 {
-		score = 100
-	}
-
-	if relationshipWeight >= 0.7 {
-		reasons = append(reasons, "strong relationship weight")
-	}
-	if rsvpCommitment >= 0.66 {
-		reasons = append(reasons, "high RSVP commitment ("+strconv.Itoa(g.RSVPYesCount)+")")
-	}
-	if eventCoverage >= 0.66 {
-		reasons = append(reasons, "high event coverage")
-	}
-	if hostOverride > 0 {
-		reasons = append(reasons, "host override applied")
-	}
-	if uncertainty < 0.9 {
-		reasons = append(reasons, "score has uncertainty due to missing data")
-	}
-
-	tier := "Optional"
-	switch {
-	case score >= 80:
-		tier = "Critical"
-	case score >= 50:
-		tier = "Important"
-	}
-	return score, tier, reasons
-}
-
-func relationshipScore(relationship string) float64 {
-	switch strings.TrimSpace(strings.ToLower(relationship)) {
-	case "close_family", "immediate_family":
-		return 1.0
-	case "family", "relative", "relatives":
-		return 0.85
-	case "friend", "friends":
-		return 0.65
-	case "colleague", "coworker":
-		return 0.45
-	case "":
-		return 0.20
-	default:
-		return 0.35
 	}
 }
 
-func hostOverrideFromTags(tags []string) float64 {
-	for _, t := range tags {
-		tt := strings.ToLower(strings.TrimSpace(t))
-		if tt == "vip" || tt == "priority" || tt == "must_call" {
-			return 1.0
-		}
+// InvalidateRelationshipOverview drops cached dashboard intelligence for an event.
+func (s *Service) InvalidateRelationshipOverview(ctx context.Context, eventID uuid.UUID) {
+	if s.cache == nil {
+		return
 	}
-	return 0.0
-}
-
-func clamp01(v float64) float64 {
-	if v < 0 {
-		return 0
-	}
-	if v > 1 {
-		return 1
-	}
-	return v
+	_ = s.cache.Delete(ctx, relationshipOverviewCacheKey(eventID))
 }
 
 func (s *Service) UpsertGuest(ctx context.Context, eventID uuid.UUID, input guestrepo.GuestInput) (string, *ServiceError) {
@@ -283,6 +276,7 @@ func (s *Service) UpsertGuest(ctx context.Context, eventID uuid.UUID, input gues
 	if err != nil {
 		return "", &ServiceError{Status: http.StatusBadRequest, Code: "UPSERT_FAILED", Message: "Unable to save guest."}
 	}
+	s.InvalidateRelationshipOverview(ctx, eventID)
 	return guestID, nil
 }
 
@@ -294,5 +288,6 @@ func (s *Service) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, csv st
 	if err != nil {
 		return nil, &ServiceError{Status: http.StatusBadRequest, Code: "CSV_IMPORT_FAILED", Message: "Unable to import guest CSV."}
 	}
+	s.InvalidateRelationshipOverview(ctx, eventID)
 	return result, nil
 }

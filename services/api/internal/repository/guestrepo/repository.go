@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -50,8 +51,16 @@ type GuestInput struct {
 	GroupID      *string
 }
 
+type ListGuestsParams struct {
+	EventID uuid.UUID
+	Limit   int
+	Offset  int
+	Sort    string
+	Cursor  *ListGuestsCursor
+}
+
 type Repository interface {
-	ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int, sort string) ([]Guest, error)
+	ListGuests(ctx context.Context, p ListGuestsParams) ([]Guest, error)
 	UpsertGuest(ctx context.Context, eventID uuid.UUID, input GuestInput) (string, error)
 	ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, rawCSV string) (*ImportResult, error)
 }
@@ -64,29 +73,106 @@ func NewPGRepository(pool *pgxpool.Pool) *PGRepository {
 	return &PGRepository{pool: pool}
 }
 
-func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int, sort string) ([]Guest, error) {
+func normalizeGuestListSort(sort string) string {
+	switch strings.ToLower(strings.TrimSpace(sort)) {
+	case "name_desc", "priority_asc", "priority_desc", "rsvp_desc", "shagun_desc":
+		return strings.ToLower(strings.TrimSpace(sort))
+	default:
+		return "name_asc"
+	}
+}
+
+func (r *PGRepository) ListGuests(ctx context.Context, p ListGuestsParams) ([]Guest, error) {
+	limit := p.Limit
 	if limit <= 0 {
 		limit = 50
 	}
 	if limit > 10000 {
 		limit = 10000
 	}
+	offset := p.Offset
 	if offset < 0 {
 		offset = 0
 	}
-	orderClause := "g.name ASC"
-	switch strings.ToLower(strings.TrimSpace(sort)) {
+	sort := normalizeGuestListSort(p.Sort)
+
+	orderClause := "g.name ASC, g.id ASC"
+	switch sort {
 	case "name_desc":
-		orderClause = "g.name DESC"
+		orderClause = "g.name DESC, g.id DESC"
 	case "priority_asc":
-		orderClause = "priority_score ASC, g.name ASC"
+		orderClause = "priority_score ASC, g.name ASC, g.id ASC"
 	case "priority_desc":
-		orderClause = "priority_score DESC, g.name ASC"
+		orderClause = "priority_score DESC, g.name ASC, g.id ASC"
 	case "rsvp_desc":
-		orderClause = "rsvp_yes_count DESC, g.name ASC"
+		orderClause = "rsvp_yes_count DESC, g.name ASC, g.id ASC"
 	case "shagun_desc":
-		orderClause = "total_shagun_paise DESC, g.name ASC"
+		orderClause = "total_shagun_paise DESC, g.name ASC, g.id ASC"
 	}
+
+	args := []any{p.EventID}
+	argPos := 2
+	seekSQL := ""
+	if p.Cursor != nil {
+		c := p.Cursor
+		switch sort {
+		case "name_asc":
+			seekSQL = fmt.Sprintf(` AND (g.name, g.id) > ($%d::text, $%d::uuid)`, argPos, argPos+1)
+			args = append(args, c.Name, c.ID)
+			argPos += 2
+		case "name_desc":
+			seekSQL = fmt.Sprintf(` AND (g.name, g.id) < ($%d::text, $%d::uuid)`, argPos, argPos+1)
+			args = append(args, c.Name, c.ID)
+			argPos += 2
+		case "priority_desc":
+			seekSQL = fmt.Sprintf(` AND (
+				g.priority_score < $%d
+				OR (g.priority_score = $%d AND g.name > $%d::text)
+				OR (g.priority_score = $%d AND g.name = $%d::text AND g.id::uuid > $%d::uuid)
+			)`, argPos, argPos+1, argPos+2, argPos+3, argPos+4, argPos+5)
+			args = append(args, c.PriorityScore, c.PriorityScore, c.Name, c.PriorityScore, c.Name, c.ID)
+			argPos += 6
+		case "priority_asc":
+			seekSQL = fmt.Sprintf(` AND (
+				g.priority_score > $%d
+				OR (g.priority_score = $%d AND g.name > $%d::text)
+				OR (g.priority_score = $%d AND g.name = $%d::text AND g.id::uuid > $%d::uuid)
+			)`, argPos, argPos+1, argPos+2, argPos+3, argPos+4, argPos+5)
+			args = append(args, c.PriorityScore, c.PriorityScore, c.Name, c.PriorityScore, c.Name, c.ID)
+			argPos += 6
+		case "rsvp_desc":
+			seekSQL = fmt.Sprintf(` AND (
+				g.rsvp_yes_count < $%d
+				OR (g.rsvp_yes_count = $%d AND g.name > $%d::text)
+				OR (g.rsvp_yes_count = $%d AND g.name = $%d::text AND g.id::uuid > $%d::uuid)
+			)`, argPos, argPos+1, argPos+2, argPos+3, argPos+4, argPos+5)
+			args = append(args, c.RSVPYes, c.RSVPYes, c.Name, c.RSVPYes, c.Name, c.ID)
+			argPos += 6
+		case "shagun_desc":
+			seekSQL = fmt.Sprintf(` AND (
+				g.total_shagun_paise < $%d
+				OR (g.total_shagun_paise = $%d AND g.name > $%d::text)
+				OR (g.total_shagun_paise = $%d AND g.name = $%d::text AND g.id::uuid > $%d::uuid)
+			)`, argPos, argPos+1, argPos+2, argPos+3, argPos+4, argPos+5)
+			args = append(args, c.ShagunPaise, c.ShagunPaise, c.Name, c.ShagunPaise, c.Name, c.ID)
+			argPos += 6
+		}
+	}
+	if p.Cursor != nil && seekSQL == "" {
+		return nil, fmt.Errorf("guest list cursor is not valid for sort %q", sort)
+	}
+
+	limitPos := argPos
+	args = append(args, limit)
+	argPos++
+
+	limitOffsetSQL := fmt.Sprintf(`LIMIT $%d`, limitPos)
+	if p.Cursor == nil {
+		offPos := argPos
+		args = append(args, offset)
+		limitOffsetSQL = fmt.Sprintf(`LIMIT $%d OFFSET $%d`, limitPos, offPos)
+	}
+
 	rows, err := r.pool.Query(ctx, `
 		WITH guest_enriched AS (
 			SELECT
@@ -162,10 +248,11 @@ func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID, limit,
 		)
 		SELECT
 			g.id, g.name, g.phone, g.email, g.relationship, g.side, g.tags, g.group_id,
-			g.rsvp_yes_count, g.rsvp_total_count, g.sub_event_total, g.latest_rsvp_at, g.total_shagun_paise
-		FROM guest_enriched g
+			g.rsvp_yes_count, g.rsvp_total_count, g.sub_event_total, g.latest_rsvp_at, g.total_shagun_paise,
+			g.priority_score
+		FROM guest_enriched g WHERE 1=1`+seekSQL+`
 		ORDER BY `+orderClause+`
-		LIMIT $2 OFFSET $3`, eventID, limit, offset)
+		`+limitOffsetSQL, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -177,6 +264,7 @@ func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID, limit,
 		if err := rows.Scan(
 			&g.ID, &g.Name, &g.Phone, &g.Email, &g.Relationship, &g.Side, &g.Tags, &g.GroupID,
 			&g.RSVPYesCount, &g.RSVPTotal, &g.SubEventTotal, &g.LastRSVPAt, &g.ShagunPaise,
+			&g.PriorityScore,
 		); err != nil {
 			return nil, fmt.Errorf("scan guest row: %w", err)
 		}
@@ -254,13 +342,18 @@ func (r *PGRepository) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, r
 		}
 	}
 
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-
 	result := &ImportResult{Imported: 0, Errors: []ImportError{}}
+
+	type csvRow struct {
+		line       int
+		name       string
+		phone      string
+		email      string
+		rel        string
+		side       string
+	}
+
+	valid := make([]csvRow, 0)
 
 	for i := start; i < len(records); i++ {
 		row := records[i]
@@ -307,17 +400,54 @@ func (r *PGRepository) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, r
 			side = strings.TrimSpace(row[sideIdx])
 		}
 
-		_, err := tx.Exec(ctx, `
-			INSERT INTO guests (event_id, group_id, name, phone, email, relationship, side, tags)
-			VALUES ($1,NULL,$2,$3,NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7::text[])
-			ON CONFLICT (event_id, phone) DO UPDATE SET name=EXCLUDED.name, email=EXCLUDED.email,
-				relationship=EXCLUDED.relationship, side=EXCLUDED.side, updated_at=now()`,
-			eventID, name, phone, email, rel, side, []string{})
-		if err != nil {
-			result.Errors = append(result.Errors, ImportError{Line: lineNo, Error: err.Error()})
-			continue
-		}
-		result.Imported++
+		valid = append(valid, csvRow{line: lineNo, name: name, phone: phone, email: email, rel: rel, side: side})
+	}
+
+	result.Imported = len(valid)
+	if len(valid) == 0 {
+		return result, nil
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `CREATE TEMP TABLE csv_import_staging (
+		name text NOT NULL,
+		phone text NOT NULL,
+		email text NOT NULL DEFAULT '',
+		relationship text NOT NULL DEFAULT '',
+		side text NOT NULL DEFAULT ''
+	) ON COMMIT DROP`); err != nil {
+		return nil, err
+	}
+
+	byPhone := make(map[string]csvRow, len(valid))
+	for _, r := range valid {
+		byPhone[r.phone] = r
+	}
+	copyRows := make([][]any, 0, len(byPhone))
+	for _, r := range byPhone {
+		copyRows = append(copyRows, []any{r.name, r.phone, r.email, r.rel, r.side})
+	}
+
+	_, err = tx.CopyFrom(ctx, pgx.Identifier{"csv_import_staging"},
+		[]string{"name", "phone", "email", "relationship", "side"},
+		pgx.CopyFromRows(copyRows))
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO guests (event_id, group_id, name, phone, email, relationship, side, tags)
+		SELECT $1::uuid, NULL, s.name, s.phone, NULLIF(s.email,''), NULLIF(s.relationship,''), NULLIF(s.side,''), '{}'::text[]
+		FROM csv_import_staging s
+		ON CONFLICT (event_id, phone) DO UPDATE SET name=EXCLUDED.name, email=EXCLUDED.email,
+			relationship=EXCLUDED.relationship, side=EXCLUDED.side, updated_at=now()`,
+		eventID); err != nil {
+		return nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {

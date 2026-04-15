@@ -47,6 +47,8 @@ export const hostGuestsResponseSchema = z.object({
   offset: z.number().optional().default(0),
   sort: z.string().optional().default('name_asc'),
   priority_tier: z.string().optional().default(''),
+  /** Opaque token for the next page when using keyset (cursor) pagination. */
+  next_cursor: z.string().optional(),
 })
 
 export const hostGuestsImportResponseSchema = z.object({

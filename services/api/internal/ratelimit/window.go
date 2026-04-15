@@ -21,6 +21,37 @@ func New(max int, window time.Duration) *Window {
 	}
 }
 
+// StartPeriodicCleanup removes expired timestamps and empty keys so one-off IPs do not
+// stay in memory forever. Call once per Window (e.g. from NewInMemoryLimiter).
+func (w *Window) StartPeriodicCleanup(interval time.Duration) {
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for range t.C {
+			w.pruneExpiredKeys()
+		}
+	}()
+}
+
+func (w *Window) pruneExpiredKeys() {
+	cutoff := time.Now().Add(-w.window)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for k, xs := range w.hits {
+		kept := xs[:0]
+		for _, hit := range xs {
+			if hit.After(cutoff) {
+				kept = append(kept, hit)
+			}
+		}
+		if len(kept) == 0 {
+			delete(w.hits, k)
+		} else {
+			w.hits[k] = kept
+		}
+	}
+}
+
 // Allow returns false if the key has reached max within the sliding window.
 func (w *Window) Allow(key string) bool {
 	now := time.Now()

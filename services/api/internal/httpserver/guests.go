@@ -35,14 +35,22 @@ func (s *Server) listGuests(c *gin.Context) {
 	}
 	limit, offset := parseLimitOffset(c)
 	sort, priorityTier := parseGuestListQuery(c)
-	list, svcErr := s.GuestService.ListGuests(c.Request.Context(), eventID, limit, offset, sort, priorityTier)
+	var cursorStr *string
+	if raw := strings.TrimSpace(c.Query("cursor")); raw != "" {
+		cursorStr = &raw
+	}
+	list, nextCursor, svcErr := s.GuestService.ListGuests(c.Request.Context(), eventID, limit, offset, sort, priorityTier, cursorStr)
 	if svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	out := gin.H{
 		"guests": list, "limit": limit, "offset": offset, "sort": sort, "priority_tier": priorityTier,
-	})
+	}
+	if nextCursor != nil {
+		out["next_cursor"] = *nextCursor
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (s *Server) getRelationshipPriorityOverview(c *gin.Context) {
@@ -178,6 +186,9 @@ func (s *Server) postCashShagun(c *gin.Context) {
 	if svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
+	}
+	if s.GuestService != nil {
+		s.GuestService.InvalidateRelationshipOverview(c.Request.Context(), eventID)
 	}
 	c.JSON(http.StatusCreated, gin.H{"ok": true})
 }

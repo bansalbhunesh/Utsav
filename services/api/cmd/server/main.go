@@ -59,7 +59,8 @@ func main() {
 		log.Fatal(err)
 	}
 	ctx := context.Background()
-	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	isProd := strings.EqualFold(strings.TrimSpace(cfg.Env), "production")
+	pool, err := db.Connect(ctx, cfg.DatabaseURL, !isProd)
 	if err != nil {
 		log.Fatalf("db: %v", err)
 	}
@@ -107,7 +108,6 @@ func main() {
 		MediaSigner: media.URLSigner{BaseURL: cfg.ObjectStorePublicBaseURL},
 	}
 	window := time.Duration(cfg.RateLimitWindowSec) * time.Second
-	isProd := strings.EqualFold(strings.TrimSpace(cfg.Env), "production")
 	if isProd && strings.TrimSpace(cfg.DevOTPCode) != "" {
 		log.Fatal("DEV_OTP_CODE must be empty in production")
 	}
@@ -186,7 +186,7 @@ func main() {
 		otpDispatcher,
 		cfg.OTPMaxAttempts,
 	)
-	srv.GuestService = guestservice.NewService(guestrepo.NewPGRepository(pool))
+	srv.GuestService = guestservice.NewService(guestrepo.NewPGRepository(pool), publicCache)
 	srv.ShagunService = shagunservice.NewService(shagunrepo.NewPGRepository(pool))
 	srv.VendorService = vendorservice.NewService(vendorrepo.NewPGRepository(pool))
 	srv.Mount(r)
