@@ -75,7 +75,11 @@ func (r *PGRepository) UpsertMemoryBook(ctx context.Context, eventID uuid.UUID, 
 func (r *PGRepository) GetMemoryBookBySlug(ctx context.Context, slug string) (uuid.UUID, map[string]any, error) {
 	var payload []byte
 	var eid uuid.UUID
-	if err := r.pool.QueryRow(ctx, `SELECT event_id, payload FROM memory_books WHERE slug=$1`, slug).Scan(&eid, &payload); err != nil {
+	if err := r.pool.QueryRow(ctx, `
+		SELECT mb.event_id, mb.payload
+		FROM memory_books mb
+		JOIN events e ON e.id = mb.event_id
+		WHERE mb.slug=$1 AND lower(trim(coalesce(e.privacy, ''))) = 'public'`, slug).Scan(&eid, &payload); err != nil {
 		return uuid.Nil, nil, err
 	}
 	var decoded map[string]any

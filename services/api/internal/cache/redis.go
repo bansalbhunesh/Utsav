@@ -38,3 +38,10 @@ func (r *RedisCache) Set(ctx context.Context, key string, value []byte, ttl time
 	}
 	return r.client.Set(ctx, key, value, ttl).Err()
 }
+
+func (r *RedisCache) Delete(ctx context.Context, keys ...string) error {
+	if r == nil || r.client == nil || len(keys) == 0 {
+		return nil
+	}
+	return r.client.Del(ctx, keys...).Err()
+}

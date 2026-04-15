@@ -70,6 +70,8 @@ type GuestShagunReportInput struct {
 
 type Repository interface {
 	GetEventBySlug(ctx context.Context, slug string) (*PublicEvent, error)
+	GetSlugByEventID(ctx context.Context, eventID uuid.UUID) (string, error)
+	ResolveEventIDBySlug(ctx context.Context, slug string) (uuid.UUID, error)
 	ListSubEvents(ctx context.Context, eventID uuid.UUID) ([]PublicSubEvent, error)
 	ListBroadcasts(ctx context.Context, eventID uuid.UUID) ([]PublicBroadcast, error)
 	ListApprovedGallery(ctx context.Context, eventID uuid.UUID) ([]PublicGalleryAsset, error)
@@ -81,12 +83,24 @@ type PGRepository struct{ pool *pgxpool.Pool }
 
 func NewPGRepository(pool *pgxpool.Pool) *PGRepository { return &PGRepository{pool: pool} }
 
+func (r *PGRepository) GetSlugByEventID(ctx context.Context, eventID uuid.UUID) (string, error) {
+	var slug string
+	err := r.pool.QueryRow(ctx, `SELECT slug FROM events WHERE id=$1`, eventID).Scan(&slug)
+	return slug, err
+}
+
+func (r *PGRepository) ResolveEventIDBySlug(ctx context.Context, slug string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := r.pool.QueryRow(ctx, `SELECT id FROM events WHERE slug=$1`, slug).Scan(&id)
+	return id, err
+}
+
 func (r *PGRepository) GetEventBySlug(ctx context.Context, slug string) (*PublicEvent, error) {
 	var e PublicEvent
 	err := r.pool.QueryRow(ctx, `
 		SELECT id, title, event_type, privacy, toggles, branding, couple_name_a, couple_name_b, love_story,
 			cover_image_url, date_start, date_end
-		FROM events WHERE slug=$1`, slug).
+		FROM events WHERE slug=$1 AND lower(trim(coalesce(privacy, ''))) = 'public'`, slug).
 		Scan(&e.ID, &e.Title, &e.EventType, &e.Privacy, &e.Toggles, &e.Branding, &e.CoupleNameA, &e.CoupleNameB, &e.LoveStory, &e.CoverImage, &e.DateStart, &e.DateEnd)
 	if err != nil {
 		return nil, err

@@ -3,7 +3,6 @@ package guestrepo
 import (
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -53,8 +52,6 @@ type GuestInput struct {
 
 type Repository interface {
 	ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int, sort, priorityTier string) ([]Guest, error)
-	UpsertRelationshipScores(ctx context.Context, eventID uuid.UUID, guests []Guest) error
-	RelationshipTierCounts(ctx context.Context, eventID uuid.UUID) (map[string]int, error)
 	UpsertGuest(ctx context.Context, eventID uuid.UUID, input GuestInput) (string, error)
 	ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, rawCSV string) (*ImportResult, error)
 }
@@ -102,31 +99,12 @@ func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID, limit,
 				COALESCE(sev.sub_event_total, 0) AS sub_event_total,
 				r.latest_rsvp_at AS latest_rsvp_at,
 				COALESCE(s.total_shagun_paise, 0) AS total_shagun_paise,
-				(
-					CASE lower(trim(COALESCE(g.relationship, '')))
-						WHEN 'close_family' THEN 45
-						WHEN 'immediate_family' THEN 45
-						WHEN 'family' THEN 35
-						WHEN 'relative' THEN 35
-						WHEN 'relatives' THEN 35
-						WHEN 'friend' THEN 22
-						WHEN 'friends' THEN 22
-						WHEN 'colleague' THEN 12
-						WHEN 'coworker' THEN 12
-						ELSE CASE WHEN trim(COALESCE(g.relationship, '')) <> '' THEN 10 ELSE 5 END
-					END
-				)
-				+ CASE WHEN trim(COALESCE(g.side, '')) <> '' THEN 5 ELSE 0 END
-				+ CASE
-					WHEN COALESCE(r.rsvp_yes_count, 0) > 0 THEN LEAST(25, 12 + (COALESCE(r.rsvp_yes_count, 0) * 5))
-					ELSE 0
-				END
-				+ CASE
-					WHEN COALESCE(s.total_shagun_paise, 0) >= 50000 THEN 20
-					WHEN COALESCE(s.total_shagun_paise, 0) >= 15000 THEN 14
-					WHEN COALESCE(s.total_shagun_paise, 0) > 0 THEN 8
-					ELSE 0
-				END AS priority_score
+				LEAST(100, GREATEST(0,
+					ROUND(100.0 * (
+						(0.30 * prio.rel_w + 0.20 * prio.rc + 0.15 * prio.rs + 0.15 * prio.ec + 0.10 * prio.hr + 0.10 * prio.ho)
+						* prio.decay * prio.unc
+					))::double precision
+				))::int AS priority_score
 			FROM guests g
 			LEFT JOIN LATERAL (
 				SELECT
@@ -137,7 +115,7 @@ func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID, limit,
 				WHERE rr.event_id=g.event_id AND rr.guest_phone=g.phone
 			) r ON TRUE
 			LEFT JOIN LATERAL (
-				SELECT COUNT(*) AS sub_event_total
+				SELECT COUNT(*)::int AS sub_event_total
 				FROM sub_events sev
 				WHERE sev.event_id=g.event_id
 			) sev ON TRUE
@@ -147,6 +125,42 @@ func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID, limit,
 				WHERE se.event_id=g.event_id
 				  AND (se.guest_id=g.id OR COALESCE(se.meta->>'guest_phone','')=g.phone)
 			) s ON TRUE
+			CROSS JOIN LATERAL (
+				SELECT
+					(CASE lower(trim(COALESCE(g.relationship, '')))
+						WHEN 'close_family' THEN 1.0::float8
+						WHEN 'immediate_family' THEN 1.0::float8
+						WHEN 'family' THEN 0.85::float8
+						WHEN 'relative' THEN 0.85::float8
+						WHEN 'relatives' THEN 0.85::float8
+						WHEN 'friend' THEN 0.65::float8
+						WHEN 'friends' THEN 0.65::float8
+						WHEN 'colleague' THEN 0.45::float8
+						WHEN 'coworker' THEN 0.45::float8
+						ELSE CASE WHEN trim(COALESCE(g.relationship, '')) = '' THEN 0.2::float8 ELSE 0.35::float8 END
+					END) AS rel_w,
+					LEAST(1.0::float8, GREATEST(0.0::float8, COALESCE(r.rsvp_yes_count, 0)::float8 / 3.0)) AS rc,
+					CASE WHEN r.latest_rsvp_at IS NULL THEN 0.0::float8
+						ELSE LEAST(1.0::float8, GREATEST(0.0::float8, 1.0::float8 - ((EXTRACT(EPOCH FROM (now() - r.latest_rsvp_at)) / 86400.0) / 14.0)))
+					END AS rs,
+					CASE WHEN COALESCE(sev.sub_event_total, 0) = 0 THEN 0.0::float8
+						ELSE LEAST(1.0::float8, GREATEST(0.0::float8, COALESCE(r.rsvp_total_count, 0)::float8 / NULLIF(sev.sub_event_total, 0)::float8))
+					END AS ec,
+					CASE WHEN COALESCE(r.rsvp_total_count, 0) = 0 THEN 0.0::float8
+						ELSE LEAST(1.0::float8, GREATEST(0.0::float8, COALESCE(r.rsvp_yes_count, 0)::float8 / NULLIF(r.rsvp_total_count, 0)::float8))
+					END AS hr,
+					(CASE WHEN EXISTS (
+						SELECT 1 FROM unnest(COALESCE(g.tags, ARRAY[]::text[])) AS t(tag)
+						WHERE lower(trim(tag)) IN ('vip', 'priority', 'must_call')
+					) THEN 1.0::float8 ELSE 0.0::float8 END) AS ho,
+					CASE WHEN r.latest_rsvp_at IS NULL THEN 0.90::float8
+						ELSE 0.75::float8 + 0.25::float8 * exp(-(EXTRACT(EPOCH FROM (now() - r.latest_rsvp_at)) / 86400.0) / 30.0)
+					END AS decay,
+					GREATEST(0.70::float8, LEAST(1.0::float8, 1.0::float8 - 0.08::float8 * (
+						(CASE WHEN COALESCE(r.rsvp_total_count, 0) = 0 THEN 3 ELSE 0 END) +
+						(CASE WHEN COALESCE(sev.sub_event_total, 0) = 0 THEN 1 ELSE 0 END)
+					)::float8)) AS unc
+			) prio
 			WHERE g.event_id=$1
 		)
 		SELECT
@@ -318,61 +332,4 @@ func (r *PGRepository) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, r
 		return nil, err
 	}
 	return result, nil
-}
-
-func (r *PGRepository) UpsertRelationshipScores(ctx context.Context, eventID uuid.UUID, guests []Guest) error {
-	if len(guests) == 0 {
-		return nil
-	}
-	const q = `
-		INSERT INTO guest_relationship_scores
-			(event_id, guest_id, priority_score, priority_tier, priority_reasons, source_version, computed_at)
-		VALUES ($1, $2, $3, $4, $5::jsonb, 1, $6)
-		ON CONFLICT (event_id, guest_id) DO UPDATE SET
-			priority_score = EXCLUDED.priority_score,
-			priority_tier = EXCLUDED.priority_tier,
-			priority_reasons = EXCLUDED.priority_reasons,
-			source_version = EXCLUDED.source_version,
-			computed_at = EXCLUDED.computed_at
-	`
-	now := time.Now().UTC()
-	for _, g := range guests {
-		guestID, err := uuid.Parse(g.ID)
-		if err != nil {
-			continue
-		}
-		reasonsRaw, _ := json.Marshal(g.PriorityReasons)
-		if _, err := r.pool.Exec(ctx, q, eventID, guestID, g.PriorityScore, strings.ToLower(g.PriorityTier), string(reasonsRaw), now); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (r *PGRepository) RelationshipTierCounts(ctx context.Context, eventID uuid.UUID) (map[string]int, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT
-			COALESCE(priority_tier, 'optional') AS tier,
-			COUNT(*) AS c
-		FROM guest_relationship_scores
-		WHERE event_id = $1
-		GROUP BY COALESCE(priority_tier, 'optional')
-	`, eventID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	counts := map[string]int{
-		"critical":  0,
-		"important": 0,
-		"optional":  0,
-	}
-	for rows.Next() {
-		var tier string
-		var count int
-		if scanErr := rows.Scan(&tier, &count); scanErr == nil {
-			counts[strings.ToLower(strings.TrimSpace(tier))] = count
-		}
-	}
-	return counts, nil
 }

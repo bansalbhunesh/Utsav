@@ -96,6 +96,7 @@ func (s *Server) postGalleryAsset(c *gin.Context) {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
+	s.invalidatePublicEventCache(c.Request.Context(), eventID)
 	c.JSON(http.StatusCreated, gin.H{"ok": true})
 }
 
@@ -147,6 +148,7 @@ func (s *Server) patchGalleryAssetModeration(c *gin.Context) {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
+	s.invalidatePublicEventCache(c.Request.Context(), eventID)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -184,7 +186,7 @@ func (s *Server) postBroadcast(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if !roleCanManageFinancials(role) {
+	if !roleCanManageEventData(role) {
 		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You are not allowed to create broadcasts.")
 		return
 	}
@@ -225,6 +227,7 @@ func (s *Server) postBroadcast(c *gin.Context) {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
+	s.invalidatePublicEventCache(c.Request.Context(), eventID)
 	c.JSON(http.StatusCreated, gin.H{"ok": true})
 }
 

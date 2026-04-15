@@ -3,6 +3,7 @@ package publicservice
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -37,6 +38,26 @@ func normalizeSlug(slug string) string {
 	return strings.TrimSpace(strings.ToLower(slug))
 }
 
+// InvalidatePublicEventCache removes cached public payloads for this event (privacy, title, schedule, etc.).
+func (s *Service) InvalidatePublicEventCache(ctx context.Context, eventID uuid.UUID) {
+	if s.cache == nil {
+		return
+	}
+	slug, err := s.repo.GetSlugByEventID(ctx, eventID)
+	if err != nil || strings.TrimSpace(slug) == "" {
+		return
+	}
+	ns := normalizeSlug(slug)
+	if err := s.cache.Delete(ctx,
+		"public:event:"+ns,
+		"public:schedule:"+ns,
+		"public:broadcasts:"+ns,
+		"public:gallery:"+ns,
+	); err != nil {
+		log.Printf("public cache delete: %v", err)
+	}
+}
+
 func (s *Service) GetEvent(ctx context.Context, slug string) (map[string]any, uuid.UUID, *ServiceError) {
 	key := "public:event:" + normalizeSlug(slug)
 	if s.cache != nil {
@@ -47,7 +68,10 @@ func (s *Service) GetEvent(ctx context.Context, slug string) (map[string]any, uu
 			}
 			if jsonErr := json.Unmarshal(raw, &payload); jsonErr == nil {
 				if eid, parseErr := uuid.Parse(payload.ID); parseErr == nil {
-					return payload.Event, eid, nil
+					if pub, _ := payload.Event["privacy"].(string); strings.EqualFold(strings.TrimSpace(pub), "public") {
+						return payload.Event, eid, nil
+					}
+					_ = s.cache.Delete(ctx, key)
 				}
 			}
 		}
@@ -79,6 +103,10 @@ func (s *Service) GetEvent(ctx context.Context, slug string) (map[string]any, uu
 }
 
 func (s *Service) ListSchedule(ctx context.Context, slug string) ([]map[string]any, uuid.UUID, *ServiceError) {
+	_, eid, svcErr := s.GetEvent(ctx, slug)
+	if svcErr != nil {
+		return nil, uuid.Nil, svcErr
+	}
 	key := "public:schedule:" + normalizeSlug(slug)
 	if s.cache != nil {
 		if raw, err := s.cache.Get(ctx, key); err == nil {
@@ -87,15 +115,11 @@ func (s *Service) ListSchedule(ctx context.Context, slug string) ([]map[string]a
 				ID   string           `json:"id"`
 			}
 			if jsonErr := json.Unmarshal(raw, &payload); jsonErr == nil {
-				if eid, parseErr := uuid.Parse(payload.ID); parseErr == nil {
+				if cachedEID, parseErr := uuid.Parse(payload.ID); parseErr == nil && cachedEID == eid {
 					return payload.Rows, eid, nil
 				}
 			}
 		}
-	}
-	_, eid, svcErr := s.GetEvent(ctx, slug)
-	if svcErr != nil {
-		return nil, uuid.Nil, svcErr
 	}
 	rows, err := s.repo.ListSubEvents(ctx, eid)
 	if err != nil {
@@ -137,6 +161,10 @@ func (s *Service) ListSchedule(ctx context.Context, slug string) ([]map[string]a
 }
 
 func (s *Service) ListBroadcasts(ctx context.Context, slug string) ([]map[string]any, *ServiceError) {
+	_, eid, svcErr := s.GetEvent(ctx, slug)
+	if svcErr != nil {
+		return nil, svcErr
+	}
 	key := "public:broadcasts:" + normalizeSlug(slug)
 	if s.cache != nil {
 		if raw, err := s.cache.Get(ctx, key); err == nil {
@@ -145,10 +173,6 @@ func (s *Service) ListBroadcasts(ctx context.Context, slug string) ([]map[string
 				return out, nil
 			}
 		}
-	}
-	_, eid, svcErr := s.GetEvent(ctx, slug)
-	if svcErr != nil {
-		return nil, svcErr
 	}
 	rows, err := s.repo.ListBroadcasts(ctx, eid)
 	if err != nil {
@@ -173,6 +197,10 @@ func (s *Service) ListBroadcasts(ctx context.Context, slug string) ([]map[string
 }
 
 func (s *Service) ListGallery(ctx context.Context, slug string) ([]map[string]any, *ServiceError) {
+	_, eid, svcErr := s.GetEvent(ctx, slug)
+	if svcErr != nil {
+		return nil, svcErr
+	}
 	key := "public:gallery:" + normalizeSlug(slug)
 	if s.cache != nil {
 		if raw, err := s.cache.Get(ctx, key); err == nil {
@@ -181,10 +209,6 @@ func (s *Service) ListGallery(ctx context.Context, slug string) ([]map[string]an
 				return out, nil
 			}
 		}
-	}
-	_, eid, svcErr := s.GetEvent(ctx, slug)
-	if svcErr != nil {
-		return nil, svcErr
 	}
 	rows, err := s.repo.ListApprovedGallery(ctx, eid)
 	if err != nil {
@@ -239,13 +263,14 @@ func (s *Service) BuildUPILink(ctx context.Context, slug string, guestEventID uu
 }
 
 func (s *Service) ReportShagun(ctx context.Context, slug string, guestEventID uuid.UUID, guestPhone string, amountINR float64, blessingNote string, subEventID *string) *ServiceError {
-	_, eid, svcErr := s.GetEvent(ctx, slug)
-	if svcErr != nil {
-		return svcErr
+	resolved, err := s.repo.ResolveEventIDBySlug(ctx, normalizeSlug(slug))
+	if err != nil {
+		return &ServiceError{Status: http.StatusNotFound, Code: "NOT_FOUND", Message: "Public event not found."}
 	}
-	if guestEventID != eid {
+	if resolved != guestEventID {
 		return &ServiceError{Status: http.StatusForbidden, Code: "WRONG_EVENT", Message: "Guest token does not match this event."}
 	}
+	eid := guestEventID
 	paise := int64(amountINR * 100)
 	if paise <= 0 {
 		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_AMOUNT", Message: "Shagun amount must be greater than zero."}

@@ -41,7 +41,7 @@ func TestGetMeSuccess(t *testing.T) {
 			}
 			return "9876543210", "Utsav", nil
 		},
-	}, nil, nil, "123456", "secret", "test", nil, 5)
+	}, nil, nil, "123456", "secret", "otp-secret", "test", nil, 5)
 
 	me, err := svc.GetMe(context.Background(), uid)
 	if err != nil {
@@ -57,7 +57,7 @@ func TestGetMeNotFound(t *testing.T) {
 		getUserProfileByIDFn: func(_ context.Context, _ uuid.UUID) (string, string, error) {
 			return "", "", pgx.ErrNoRows
 		},
-	}, nil, nil, "123456", "secret", "test", nil, 5)
+	}, nil, nil, "123456", "secret", "otp-secret", "test", nil, 5)
 
 	_, err := svc.GetMe(context.Background(), uuid.New())
 	if err == nil {

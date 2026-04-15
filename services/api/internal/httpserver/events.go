@@ -113,11 +113,11 @@ func (s *Server) getEvent(c *gin.Context) {
 }
 
 type patchEventBody struct {
-	Title      *string        `json:"title"`
-	Privacy    *string        `json:"privacy"`
-	Toggles    map[string]any `json:"toggles"`
-	Branding   map[string]any `json:"branding"`
-	HostUPIVPA *string        `json:"host_upi_vpa"`
+	Title      *string          `json:"title"`
+	Privacy    *string          `json:"privacy"`
+	Toggles    *map[string]any  `json:"toggles"`
+	Branding   *map[string]any  `json:"branding"`
+	HostUPIVPA *string          `json:"host_upi_vpa"`
 }
 
 func (s *Server) patchEvent(c *gin.Context) {
@@ -142,14 +142,18 @@ func (s *Server) patchEvent(c *gin.Context) {
 	if hostVPA != nil && !roleCanManageFinancials(role) {
 		hostVPA = nil
 	}
-	if svcErr := s.EventService.PatchEvent(c.Request.Context(), eventID, role, eventrepo.PatchEventInput{
+	patch := eventrepo.PatchEventInput{
 		Title:      body.Title,
 		Privacy:    body.Privacy,
 		HostUPIVPA: hostVPA,
-	}); svcErr != nil {
+		Toggles:    body.Toggles,
+		Branding:   body.Branding,
+	}
+	if svcErr := s.EventService.PatchEvent(c.Request.Context(), eventID, role, patch); svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
+	s.invalidatePublicEventCache(c.Request.Context(), eventID)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
@@ -194,6 +198,7 @@ func (s *Server) postSubEvent(c *gin.Context) {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
+	s.invalidatePublicEventCache(c.Request.Context(), eventID)
 	c.JSON(http.StatusCreated, gin.H{"id": id})
 }
 

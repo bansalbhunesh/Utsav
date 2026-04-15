@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -98,6 +99,13 @@ func (s *Server) requireUserMiddleware() gin.HandlerFunc {
 	}
 }
 
+func (s *Server) invalidatePublicEventCache(ctx context.Context, eventID uuid.UUID) {
+	if s.PublicService == nil {
+		return
+	}
+	s.PublicService.InvalidatePublicEventCache(ctx, eventID)
+}
+
 func (s *Server) requireEventAccessMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, eventID, role, ok := s.requireEventAccess(c)
@@ -155,21 +163,22 @@ func (s *Server) requireUser(c *gin.Context) (uuid.UUID, bool) {
 
 func (s *Server) eventRole(ctx context.Context, userID, eventID uuid.UUID) (string, bool) {
 	var owner uuid.UUID
-	err := s.Pool.QueryRow(ctx, `SELECT owner_user_id FROM events WHERE id=$1`, eventID).Scan(&owner)
+	var memberRole sql.NullString
+	err := s.Pool.QueryRow(ctx, `
+		SELECT e.owner_user_id, m.role
+		FROM events e
+		LEFT JOIN event_members m ON m.event_id = e.id AND m.user_id = $2 AND m.status = 'active'
+		WHERE e.id = $1`, eventID, userID).Scan(&owner, &memberRole)
 	if err != nil {
 		return "", false
 	}
 	if owner == userID {
 		return "owner", true
 	}
-	var role string
-	err = s.Pool.QueryRow(ctx, `
-		SELECT role FROM event_members
-		WHERE event_id=$1 AND user_id=$2 AND status='active'`, eventID, userID).Scan(&role)
-	if err != nil {
+	if !memberRole.Valid {
 		return "", false
 	}
-	return role, true
+	return memberRole.String, true
 }
 
 func roleCanManageEventData(role string) bool {

@@ -14,6 +14,7 @@ type Config struct {
 	MigrationsPath           string
 	Env                      string
 	JWTSecret                string
+	OTPSecret                string // HMAC key for OTP code hashing; must differ from JWT in production.
 	DevOTPCode               string
 	OTPProvider              string
 	OTPAPIKey                string
@@ -57,12 +58,28 @@ func Load() (*Config, error) {
 	cors := getenv("CORS_ORIGIN", "http://localhost:3000")
 	runMig := getenv("RUN_MIGRATIONS", "true") == "true"
 	env := getenv("ENV", "development")
-	if strings.EqualFold(strings.TrimSpace(env), "production") {
+	isProd := strings.EqualFold(strings.TrimSpace(env), "production")
+	if isProd {
 		if strings.TrimSpace(secret) == "" || secret == "dev-insecure-change-me" {
 			log.Fatal("JWT_SECRET must be set to a strong secret in production")
 		}
 		if len(secret) < 32 {
 			log.Fatal("JWT_SECRET must be at least 32 characters in production")
+		}
+	}
+	otpSecret := strings.TrimSpace(os.Getenv("OTP_SECRET"))
+	if otpSecret == "" {
+		otpSecret = secret
+	}
+	if isProd {
+		if otpSecret == "" || otpSecret == "dev-insecure-change-me" {
+			log.Fatal("OTP_SECRET must be set to a strong secret in production (independent of JWT rotation)")
+		}
+		if len(otpSecret) < 32 {
+			log.Fatal("OTP_SECRET must be at least 32 characters in production")
+		}
+		if otpSecret == secret {
+			log.Fatal("OTP_SECRET must differ from JWT_SECRET in production so rotating JWT does not break in-flight OTP verification")
 		}
 	}
 	return &Config{
@@ -71,6 +88,7 @@ func Load() (*Config, error) {
 		MigrationsPath:           migrations,
 		Env:                      env,
 		JWTSecret:                secret,
+		OTPSecret:                otpSecret,
 		DevOTPCode:               getenv("DEV_OTP_CODE", "123456"),
 		OTPProvider:              getenv("OTP_PROVIDER", ""),
 		OTPAPIKey:                getenv("OTP_API_KEY", ""),

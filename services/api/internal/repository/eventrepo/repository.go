@@ -57,6 +57,8 @@ type PatchEventInput struct {
 	Title      *string
 	Privacy    *string
 	HostUPIVPA *string
+	Toggles    *map[string]any
+	Branding   *map[string]any
 }
 
 type CreateSubEventInput struct {
@@ -188,7 +190,7 @@ func (r *PGRepository) GetEventByID(ctx context.Context, eventID uuid.UUID) (*Ev
 }
 
 func (r *PGRepository) PatchEvent(ctx context.Context, eventID uuid.UUID, input PatchEventInput) error {
-	sets := make([]string, 0, 3)
+	sets := make([]string, 0, 6)
 	args := []any{eventID}
 	idx := 2
 	if input.Title != nil {
@@ -204,6 +206,16 @@ func (r *PGRepository) PatchEvent(ctx context.Context, eventID uuid.UUID, input 
 	if input.HostUPIVPA != nil {
 		sets = append(sets, fmt.Sprintf("host_upi_vpa=$%d", idx))
 		args = append(args, *input.HostUPIVPA)
+		idx++
+	}
+	if input.Toggles != nil {
+		sets = append(sets, fmt.Sprintf("toggles=$%d::jsonb", idx))
+		args = append(args, mustJSONB(*input.Toggles))
+		idx++
+	}
+	if input.Branding != nil {
+		sets = append(sets, fmt.Sprintf("branding=$%d::jsonb", idx))
+		args = append(args, mustJSONB(*input.Branding))
 		idx++
 	}
 	if len(sets) == 0 {

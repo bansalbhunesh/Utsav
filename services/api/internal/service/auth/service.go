@@ -52,6 +52,7 @@ type Service struct {
 	otpVerifyLimiter  ratelimit.Limiter
 	devOTP            string
 	jwtSecret         []byte
+	otpSecret         []byte
 	env               string
 	otpDispatcher     otp.Dispatcher
 	otpMaxAttempts    int
@@ -65,6 +66,7 @@ func NewService(
 	otpVerifyLimiter ratelimit.Limiter,
 	devOTPCode string,
 	jwtSecret string,
+	otpSecret string,
 	env string,
 	otpDispatcher otp.Dispatcher,
 	otpMaxAttempts int,
@@ -75,6 +77,7 @@ func NewService(
 		otpVerifyLimiter:  otpVerifyLimiter,
 		devOTP:            strings.TrimSpace(devOTPCode),
 		jwtSecret:         []byte(jwtSecret),
+		otpSecret:         []byte(otpSecret),
 		env:               strings.TrimSpace(strings.ToLower(env)),
 		otpDispatcher:     otpDispatcher,
 		otpMaxAttempts:    otpMaxAttempts,
@@ -126,7 +129,7 @@ func (s *Service) RequestOTP(ctx context.Context, phone, clientIP string) *Servi
 			return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_GENERATE_FAILED", Message: "Unable to generate OTP code."}
 		}
 	}
-	hash, err := otp.HashCode(s.jwtSecret, code)
+	hash, err := otp.HashCode(s.otpSecret, code)
 	if err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_HASH_FAILED", Message: "Unable to process OTP request."}
 	}
@@ -171,7 +174,7 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code, clientIP string) (
 	if s.otpMaxAttempts > 0 && ch.Attempts >= s.otpMaxAttempts {
 		return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "OTP_LOCKED", Message: "OTP attempts exceeded. Request a new code."}
 	}
-	if !otp.VerifyCode(s.jwtSecret, ch.CodeHash, code) {
+	if !otp.VerifyCode(s.otpSecret, ch.CodeHash, code) {
 		if incErr := s.repo.IncrementPhoneOTPAttempts(ctx, ch.ID); incErr != nil {
 			return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_STATE_FAILED", Message: "Unable to update OTP state."}
 		}

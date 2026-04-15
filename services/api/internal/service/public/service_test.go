@@ -17,6 +17,21 @@ type mockPublicRepo struct {
 	insertGuestShagunReportFn func(ctx context.Context, in publicrepo.GuestShagunReportInput) error
 }
 
+func (m *mockPublicRepo) GetSlugByEventID(context.Context, uuid.UUID) (string, error) {
+	return "", errors.New("not implemented")
+}
+
+func (m *mockPublicRepo) ResolveEventIDBySlug(ctx context.Context, slug string) (uuid.UUID, error) {
+	if m.getEventBySlugFn == nil {
+		return uuid.Nil, errors.New("not implemented")
+	}
+	ev, err := m.getEventBySlugFn(ctx, slug)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return ev.ID, nil
+}
+
 func (m *mockPublicRepo) GetEventBySlug(ctx context.Context, slug string) (*publicrepo.PublicEvent, error) {
 	if m.getEventBySlugFn != nil {
 		return m.getEventBySlugFn(ctx, slug)
