@@ -41,7 +41,7 @@ type GuestInput struct {
 }
 
 type Repository interface {
-	ListGuests(ctx context.Context, eventID uuid.UUID) ([]Guest, error)
+	ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int) ([]Guest, error)
 	UpsertGuest(ctx context.Context, eventID uuid.UUID, input GuestInput) (string, error)
 	ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, rawCSV string) (*ImportResult, error)
 }
@@ -54,10 +54,16 @@ func NewPGRepository(pool *pgxpool.Pool) *PGRepository {
 	return &PGRepository{pool: pool}
 }
 
-func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID) ([]Guest, error) {
+func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int) ([]Guest, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, name, phone, email, relationship, side, tags, group_id
-		FROM guests WHERE event_id=$1 ORDER BY name`, eventID)
+		FROM guests WHERE event_id=$1 ORDER BY name LIMIT $2 OFFSET $3`, eventID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

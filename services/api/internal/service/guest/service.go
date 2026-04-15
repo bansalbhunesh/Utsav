@@ -26,8 +26,8 @@ func NewService(repo guestrepo.Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID) ([]guestrepo.Guest, *ServiceError) {
-	list, err := s.repo.ListGuests(ctx, eventID)
+func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int) ([]guestrepo.Guest, *ServiceError) {
+	list, err := s.repo.ListGuests(ctx, eventID, limit, offset)
 	if err != nil {
 		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
 	}

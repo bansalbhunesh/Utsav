@@ -53,7 +53,7 @@ type Service struct {
 	devOTP            string
 	jwtSecret         []byte
 	env               string
-	otpSender         otp.Sender
+	otpDispatcher     otp.Dispatcher
 	otpMaxAttempts    int
 }
 
@@ -64,7 +64,7 @@ func NewService(
 	devOTPCode string,
 	jwtSecret string,
 	env string,
-	otpSender otp.Sender,
+	otpDispatcher otp.Dispatcher,
 	otpMaxAttempts int,
 ) *Service {
 	return &Service{
@@ -74,7 +74,7 @@ func NewService(
 		devOTP:            strings.TrimSpace(devOTPCode),
 		jwtSecret:         []byte(jwtSecret),
 		env:               strings.TrimSpace(strings.ToLower(env)),
-		otpSender:         otpSender,
+		otpDispatcher:     otpDispatcher,
 		otpMaxAttempts:    otpMaxAttempts,
 	}
 }
@@ -130,8 +130,8 @@ func (s *Service) RequestOTP(ctx context.Context, phone, clientIP string) *Servi
 	if err := s.repo.InsertPhoneOTPChallenge(ctx, phone, string(hash)); err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_PERSIST_FAILED", Message: "Unable to save OTP challenge."}
 	}
-	if s.otpSender != nil {
-		if err := s.otpSender.SendOTP(ctx, phone, code); err != nil {
+	if s.otpDispatcher != nil {
+		if err := s.otpDispatcher.DispatchOTP(ctx, phone, code); err != nil {
 			return &ServiceError{Status: http.StatusBadGateway, Code: "OTP_SEND_FAILED", Message: "Unable to send OTP code."}
 		}
 	}

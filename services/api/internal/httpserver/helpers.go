@@ -2,8 +2,11 @@ package httpserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,6 +88,30 @@ type Server struct {
 	VendorService *vendorservice.Service
 }
 
+func (s *Server) requireUserMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if _, ok := s.requireUser(c); !ok {
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func (s *Server) requireEventAccessMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, eventID, role, ok := s.requireEventAccess(c)
+		if !ok {
+			c.Abort()
+			return
+		}
+		c.Set("auth_user_id", userID.String())
+		c.Set("auth_event_id", eventID.String())
+		c.Set("auth_event_role", role)
+		c.Next()
+	}
+}
+
 func bearerUserID(c *gin.Context, secret []byte) (uuid.UUID, bool) {
 	h := c.GetHeader("Authorization")
 	if !strings.HasPrefix(strings.ToLower(h), "bearer ") {
@@ -101,8 +128,23 @@ func bearerUserID(c *gin.Context, secret []byte) (uuid.UUID, bool) {
 	return uid, true
 }
 
+func cookieUserID(c *gin.Context, secret []byte) (uuid.UUID, bool) {
+	raw, err := c.Cookie("utsav_access_token")
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return uuid.Nil, false
+	}
+	uid, parseErr := auth.ParseAccessToken(raw, secret)
+	if parseErr != nil {
+		return uuid.Nil, false
+	}
+	return uid, true
+}
+
 func (s *Server) requireUser(c *gin.Context) (uuid.UUID, bool) {
 	uid, ok := bearerUserID(c, []byte(s.Config.JWTSecret))
+	if !ok {
+		uid, ok = cookieUserID(c, []byte(s.Config.JWTSecret))
+	}
 	if !ok {
 		writeAPIError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Missing or invalid access token.")
 		return uuid.Nil, false
@@ -184,4 +226,82 @@ func (s *Server) guestBearer(c *gin.Context) (eventID uuid.UUID, phone string, o
 	}
 	c.Set("guest_id", ph)
 	return eid, ph, true
+}
+
+func parseLimitOffset(c *gin.Context) (int, int) {
+	limit := 50
+	offset := 0
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			limit = n
+		}
+	}
+	if raw := strings.TrimSpace(c.Query("offset")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			offset = n
+		}
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+
+func hashFingerprint(parts ...string) string {
+	h := sha256.New()
+	for _, p := range parts {
+		_, _ = h.Write([]byte(p))
+		_, _ = h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (s *Server) reserveIdempotencyKey(ctx context.Context, scope, key, fingerprint string) (bool, error) {
+	tag, err := s.Pool.Exec(ctx, `
+		INSERT INTO idempotency_keys (scope, key, fingerprint)
+		VALUES ($1,$2,$3)
+		ON CONFLICT (scope, key) DO NOTHING
+	`, scope, key, fingerprint)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 0 {
+		var existing string
+		readErr := s.Pool.QueryRow(ctx, `
+			SELECT fingerprint FROM idempotency_keys WHERE scope=$1 AND key=$2
+		`, scope, key).Scan(&existing)
+		if readErr != nil {
+			return false, readErr
+		}
+		return existing == fingerprint, nil
+	}
+	return true, nil
+}
+
+func (s *Server) reserveWebhookDelivery(ctx context.Context, provider, eventKey, payloadHash string) (bool, error) {
+	tag, err := s.Pool.Exec(ctx, `
+		INSERT INTO webhook_deliveries (provider, event_key, payload_hash)
+		VALUES ($1,$2,$3)
+		ON CONFLICT (provider, event_key) DO NOTHING
+	`, provider, eventKey, payloadHash)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 0 {
+		var existing string
+		readErr := s.Pool.QueryRow(ctx, `
+			SELECT payload_hash FROM webhook_deliveries WHERE provider=$1 AND event_key=$2
+		`, provider, eventKey).Scan(&existing)
+		if readErr != nil {
+			return false, readErr
+		}
+		return existing == payloadHash, nil
+	}
+	return true, nil
 }

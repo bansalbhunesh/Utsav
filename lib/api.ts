@@ -1,33 +1,14 @@
 // Authoritative API bridge for UTSAV v1.5
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
 
-// --- Host Auth Management ---
-const tokenKey = "utsav_access_token";
-const refreshKey = "utsav_refresh_token";
-const authCookieKey = "utsav_access_token";
-
-export function getAccessToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(tokenKey);
-}
-
-export function setTokens(access: string, refresh?: string) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(tokenKey, access);
-  if (refresh) localStorage.setItem(refreshKey, refresh);
-  document.cookie = `${authCookieKey}=${encodeURIComponent(access)}; path=/; samesite=lax`;
-}
-
 export function clearTokens() {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(tokenKey);
-  localStorage.removeItem(refreshKey);
-  document.cookie = `${authCookieKey}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; samesite=lax`;
-}
-
-function getRefreshToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(refreshKey);
+  if (typeof window === "undefined") return
+  fetch(`${API_BASE_URL}/v1/auth/logout`, {
+    method: 'POST',
+    credentials: 'include',
+  }).catch(() => {
+    // ignore logout network errors on client cleanup
+  })
 }
 
 // --- Guest Session Management ---
@@ -63,14 +44,9 @@ export class ApiError extends Error {
 
 async function performFetch<T>(
   endpoint: string,
-  options: ApiOptions,
-  token: string | null
+  options: ApiOptions
 ): Promise<T> {
   const headers = new Headers(options.headers)
-
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`)
-  }
 
   if (options.json !== undefined) {
     headers.set('Content-Type', 'application/json')
@@ -80,6 +56,7 @@ async function performFetch<T>(
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
     headers,
+    credentials: 'include',
   })
 
   if (!response.ok) throw response
@@ -103,17 +80,12 @@ async function parseApiError(response: Response): Promise<ApiError> {
 }
 
 async function refreshAccessToken(): Promise<boolean> {
-  const refresh = getRefreshToken()
-  if (!refresh) return false
   try {
     const response = await fetch(`${API_BASE_URL}/v1/auth/refresh`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refresh }),
+      credentials: 'include',
     })
     if (!response.ok) return false
-    const data = (await response.json()) as { access_token: string; refresh_token?: string }
-    setTokens(data.access_token, data.refresh_token)
     return true
   } catch {
     return false
@@ -125,7 +97,7 @@ export async function apiFetch<T>(
   options: ApiOptions = {}
 ): Promise<T> {
   try {
-    return await performFetch<T>(endpoint, { ...options }, getAccessToken())
+    return await performFetch<T>(endpoint, { ...options })
   } catch (rawErr) {
     const response = rawErr as Response
     if (response?.status !== 401) {
@@ -139,7 +111,7 @@ export async function apiFetch<T>(
     }
 
     try {
-      return await performFetch<T>(endpoint, { ...options }, getAccessToken())
+      return await performFetch<T>(endpoint, { ...options })
     } catch (retryErr) {
       const retryResponse = retryErr as Response
       throw await parseApiError(retryResponse)

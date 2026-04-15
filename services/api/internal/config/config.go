@@ -38,6 +38,7 @@ type Config struct {
 	SentryDSN                string
 	BetterstackHeartbeatURL  string
 	FrontendSentryDSN        string
+	AuthCookieDomain         string
 }
 
 func Load() (*Config, error) {
@@ -85,6 +86,7 @@ func Load() (*Config, error) {
 		SentryDSN:                getenv("SENTRY_DSN", ""),
 		BetterstackHeartbeatURL:  getenv("BETTERSTACK_HEARTBEAT_URL", ""),
 		FrontendSentryDSN:        getenv("NEXT_PUBLIC_SENTRY_DSN", ""),
+		AuthCookieDomain:         getenv("AUTH_COOKIE_DOMAIN", ""),
 	}, nil
 }
 

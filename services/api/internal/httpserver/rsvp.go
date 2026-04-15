@@ -1,7 +1,9 @@
 package httpserver
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -107,6 +109,22 @@ func (s *Server) postPublicRSVP(c *gin.Context) {
 	}
 	if s.RSVPService == nil {
 		writeAPIError(c, http.StatusInternalServerError, "RSVP_SERVICE_UNAVAILABLE", "RSVP service unavailable.")
+		return
+	}
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if idempotencyKey == "" {
+		writeAPIError(c, http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required.")
+		return
+	}
+	rawItems, _ := json.Marshal(body.Items)
+	fingerprint := hashFingerprint(eidSlug.String(), phone, string(rawItems))
+	ok, err := s.reserveIdempotencyKey(c.Request.Context(), "public_rsvp_submit", idempotencyKey, fingerprint)
+	if err != nil {
+		writeAPIError(c, http.StatusInternalServerError, "IDEMPOTENCY_FAILED", "Unable to validate idempotency key.")
+		return
+	}
+	if !ok {
+		writeAPIError(c, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used for a different request.")
 		return
 	}
 

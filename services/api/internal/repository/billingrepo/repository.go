@@ -2,9 +2,11 @@ package billingrepo
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,6 +31,8 @@ type Repository interface {
 	ListCheckouts(ctx context.Context, userID uuid.UUID) ([]Checkout, error)
 	MarkOrderPaidAndFetch(ctx context.Context, orderID string) (string, any, error)
 }
+
+var ErrCheckoutNotFound = errors.New("checkout not found")
 
 type PGRepository struct {
 	pool *pgxpool.Pool
@@ -78,16 +82,36 @@ func (r *PGRepository) ListCheckouts(ctx context.Context, userID uuid.UUID) ([]C
 }
 
 func (r *PGRepository) MarkOrderPaidAndFetch(ctx context.Context, orderID string) (string, any, error) {
-	tag, err := r.pool.Exec(ctx, `UPDATE billing_checkouts SET status='paid' WHERE razorpay_order_id=$1`, orderID)
-	if err != nil || tag.RowsAffected() == 0 {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
 		return "", nil, err
 	}
+	defer tx.Rollback(ctx)
+
 	var tier string
-	var eventID any
-	_ = r.pool.QueryRow(ctx, `
-		SELECT tier, event_id FROM billing_checkouts WHERE razorpay_order_id=$1`, orderID).Scan(&tier, &eventID)
+	var eventID *uuid.UUID
+	var status string
+	err = tx.QueryRow(ctx, `
+		SELECT tier, event_id, status FROM billing_checkouts WHERE razorpay_order_id=$1
+		FOR UPDATE`, orderID).Scan(&tier, &eventID, &status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil, ErrCheckoutNotFound
+		}
+		return "", nil, err
+	}
+	if status != "paid" {
+		if _, err := tx.Exec(ctx, `UPDATE billing_checkouts SET status='paid' WHERE razorpay_order_id=$1`, orderID); err != nil {
+			return "", nil, err
+		}
+	}
 	if eventID != nil {
-		_, _ = r.pool.Exec(ctx, `UPDATE events SET tier=$1 WHERE id=$2`, tier, eventID)
+		if _, err := tx.Exec(ctx, `UPDATE events SET tier=$1 WHERE id=$2`, tier, *eventID); err != nil {
+			return "", nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", nil, err
 	}
 	return tier, eventID, nil
 }

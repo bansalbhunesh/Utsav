@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -194,6 +195,22 @@ func (s *Server) postBroadcast(c *gin.Context) {
 	var body broadcastBody
 	if err := c.ShouldBindJSON(&body); err != nil {
 		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Broadcast payload is invalid.")
+		return
+	}
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if idempotencyKey == "" {
+		writeAPIError(c, http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required.")
+		return
+	}
+	rawBody, _ := json.Marshal(body)
+	fingerprint := hashFingerprint(eventID.String(), uid.String(), string(rawBody))
+	idempotentOK, err := s.reserveIdempotencyKey(c.Request.Context(), "broadcast_create", idempotencyKey, fingerprint)
+	if err != nil {
+		writeAPIError(c, http.StatusInternalServerError, "IDEMPOTENCY_FAILED", "Unable to validate idempotency key.")
+		return
+	}
+	if !idempotentOK {
+		writeAPIError(c, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used for a different request.")
 		return
 	}
 	if svcErr := s.BroadcastService.Create(c.Request.Context(), broadcastrepo.CreateInput{
@@ -486,6 +503,21 @@ func (s *Server) postBillingCheckout(c *gin.Context) {
 		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Checkout payload is invalid.")
 		return
 	}
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if idempotencyKey == "" {
+		writeAPIError(c, http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required.")
+		return
+	}
+	fingerprint := hashFingerprint(uid.String(), strings.TrimSpace(strings.ToLower(body.Tier)), strings.TrimSpace(body.EventID))
+	idempotentOK, err := s.reserveIdempotencyKey(c.Request.Context(), "billing_checkout", idempotencyKey, fingerprint)
+	if err != nil {
+		writeAPIError(c, http.StatusInternalServerError, "IDEMPOTENCY_FAILED", "Unable to validate idempotency key.")
+		return
+	}
+	if !idempotentOK {
+		writeAPIError(c, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used for a different request.")
+		return
+	}
 	orderID := "order_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	if len(orderID) > 40 {
 		orderID = orderID[:40]
@@ -588,11 +620,37 @@ func (s *Server) postRazorpayWebhook(c *gin.Context) {
 		writeAPIError(c, http.StatusBadRequest, "MISSING_ORDER_ID", "Order id is required.")
 		return
 	}
+	eventKey := strings.TrimSpace(c.GetHeader("X-Razorpay-Event-Id"))
+	if eventKey == "" {
+		eventKey = hashFingerprint(body.Event, orderID, sig)
+	}
+	payloadHash := hashFingerprint(string(payload))
+	accepted, dedupeErr := s.reserveWebhookDelivery(c.Request.Context(), "razorpay", eventKey, payloadHash)
+	if dedupeErr != nil {
+		writeAPIError(c, http.StatusInternalServerError, "WEBHOOK_DEDUPE_FAILED", "Unable to validate webhook dedupe key.")
+		return
+	}
+	if !accepted {
+		c.JSON(http.StatusConflict, gin.H{"ok": false, "error": "webhook_dedupe_conflict"})
+		return
+	}
 	if s.BillingService == nil {
 		writeAPIError(c, http.StatusInternalServerError, "BILLING_SERVICE_UNAVAILABLE", "Billing service unavailable.")
 		return
 	}
-	if svcErr := s.BillingService.MarkOrderPaid(c.Request.Context(), orderID); svcErr != nil {
+	var svcErr *billingservice.ServiceError
+	backoff := 200 * time.Millisecond
+	for attempt := 1; attempt <= 3; attempt++ {
+		svcErr = s.BillingService.MarkOrderPaid(c.Request.Context(), orderID)
+		if svcErr == nil || svcErr.Status < 500 {
+			break
+		}
+		if attempt < 3 {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+	}
+	if svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}

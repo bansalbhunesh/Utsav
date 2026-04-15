@@ -1,9 +1,13 @@
 package httpserver
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
 
 func (s *Server) Mount(r *gin.Engine) {
 	r.GET("/health", s.healthz)
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	v1 := r.Group("/v1")
 	v1.GET("/healthz", s.healthz)
 	v1.GET("/readyz", s.readyz)
@@ -11,37 +15,43 @@ func (s *Server) Mount(r *gin.Engine) {
 	v1.POST("/auth/otp/request", s.postOTPRequest)
 	v1.POST("/auth/otp/verify", s.postOTPVerify)
 	v1.POST("/auth/refresh", s.postRefresh)
+	v1.POST("/auth/logout", s.postLogout)
 
-	v1.GET("/me", s.getMe)
+	authed := v1.Group("/")
+	authed.Use(s.requireUserMiddleware())
+	authed.GET("/me", s.getMe)
 
-	v1.GET("/events/check-slug", s.getCheckSlug)
-	v1.POST("/events", s.postEvent)
-	v1.GET("/events", s.listEvents)
-	v1.GET("/events/:id", s.getEvent)
-	v1.PATCH("/events/:id", s.patchEvent)
-	v1.POST("/events/:id/sub-events", s.postSubEvent)
-	v1.GET("/events/:id/sub-events", s.listSubEvents)
-	v1.POST("/events/:id/members", s.postEventMember)
+	authed.GET("/events/check-slug", s.getCheckSlug)
+	authed.POST("/events", s.postEvent)
+	authed.GET("/events", s.listEvents)
 
-	v1.GET("/events/:id/guests", s.listGuests)
-	v1.POST("/events/:id/guests", s.postGuest)
-	v1.POST("/events/:id/guests/import", s.postGuestsImport)
-	v1.GET("/events/:id/vendors", s.listVendors)
-	v1.POST("/events/:id/vendors", s.postVendor)
-	v1.DELETE("/events/:id/vendors/:vendorId", s.deleteVendor)
-	v1.POST("/events/:id/cash-shagun", s.postCashShagun)
+	eventAuthed := authed.Group("/events/:id")
+	eventAuthed.Use(s.requireEventAccessMiddleware())
+	eventAuthed.GET("", s.getEvent)
+	eventAuthed.PATCH("", s.patchEvent)
+	eventAuthed.POST("/sub-events", s.postSubEvent)
+	eventAuthed.GET("/sub-events", s.listSubEvents)
+	eventAuthed.POST("/members", s.postEventMember)
 
-	v1.GET("/events/:id/rsvps", s.listRSVPsHost)
-	v1.GET("/events/:id/shagun", s.listShagunHost)
+	eventAuthed.GET("/guests", s.listGuests)
+	eventAuthed.POST("/guests", s.postGuest)
+	eventAuthed.POST("/guests/import", s.postGuestsImport)
+	eventAuthed.GET("/vendors", s.listVendors)
+	eventAuthed.POST("/vendors", s.postVendor)
+	eventAuthed.DELETE("/vendors/:vendorId", s.deleteVendor)
+	eventAuthed.POST("/cash-shagun", s.postCashShagun)
 
-	v1.POST("/events/:id/gallery/assets", s.postGalleryAsset)
-	v1.POST("/events/:id/gallery/presign", s.postGalleryPresign)
-	v1.GET("/events/:id/gallery/assets", s.listGalleryAssets)
-	v1.PATCH("/events/:id/gallery/assets/:assetId", s.patchGalleryAssetModeration)
-	v1.GET("/events/:id/broadcasts", s.listBroadcastsHost)
-	v1.POST("/events/:id/broadcasts", s.postBroadcast)
-	v1.POST("/events/:id/memory-book/generate", s.postMemoryBookGenerate)
-	v1.POST("/events/:id/memory-book/export", s.postMemoryBookExport)
+	eventAuthed.GET("/rsvps", s.listRSVPsHost)
+	eventAuthed.GET("/shagun", s.listShagunHost)
+
+	eventAuthed.POST("/gallery/assets", s.postGalleryAsset)
+	eventAuthed.POST("/gallery/presign", s.postGalleryPresign)
+	eventAuthed.GET("/gallery/assets", s.listGalleryAssets)
+	eventAuthed.PATCH("/gallery/assets/:assetId", s.patchGalleryAssetModeration)
+	eventAuthed.GET("/broadcasts", s.listBroadcastsHost)
+	eventAuthed.POST("/broadcasts", s.postBroadcast)
+	eventAuthed.POST("/memory-book/generate", s.postMemoryBookGenerate)
+	eventAuthed.POST("/memory-book/export", s.postMemoryBookExport)
 
 	v1.GET("/public/events/:slug", s.getPublicEvent)
 	v1.GET("/public/events/:slug/schedule", s.getPublicSchedule)
@@ -56,15 +66,15 @@ func (s *Server) Mount(r *gin.Engine) {
 
 	v1.GET("/public/memory/:slug", s.getPublicMemoryBook)
 
-	v1.POST("/organiser/profile", s.postOrganiserProfile)
-	v1.GET("/organiser/me", s.getOrganiserMe)
-	v1.GET("/organiser/events", s.getOrganiserEvents)
-	v1.GET("/organiser/clients", s.listOrganiserClients)
-	v1.POST("/organiser/clients", s.postOrganiserClient)
-	v1.PATCH("/organiser/clients/:clientId", s.patchOrganiserClient)
-	v1.POST("/organiser/clients/:clientId/events", s.postOrganiserClientEvent)
+	authed.POST("/organiser/profile", s.postOrganiserProfile)
+	authed.GET("/organiser/me", s.getOrganiserMe)
+	authed.GET("/organiser/events", s.getOrganiserEvents)
+	authed.GET("/organiser/clients", s.listOrganiserClients)
+	authed.POST("/organiser/clients", s.postOrganiserClient)
+	authed.PATCH("/organiser/clients/:clientId", s.patchOrganiserClient)
+	authed.POST("/organiser/clients/:clientId/events", s.postOrganiserClientEvent)
 
-	v1.POST("/billing/checkout", s.postBillingCheckout)
-	v1.GET("/billing/checkouts", s.listBillingCheckouts)
+	authed.POST("/billing/checkout", s.postBillingCheckout)
+	authed.GET("/billing/checkouts", s.listBillingCheckouts)
 	v1.POST("/billing/webhook/razorpay", s.postRazorpayWebhook)
 }

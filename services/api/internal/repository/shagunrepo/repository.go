@@ -27,7 +27,7 @@ type HostShagunRow struct {
 
 type Repository interface {
 	LogCashShagun(ctx context.Context, eventID uuid.UUID, input CashShagunInput) error
-	ListHostShagun(ctx context.Context, eventID uuid.UUID) ([]HostShagunRow, error)
+	ListHostShagun(ctx context.Context, eventID uuid.UUID, limit, offset int) ([]HostShagunRow, error)
 }
 
 type PGRepository struct {
@@ -61,10 +61,16 @@ func (r *PGRepository) LogCashShagun(ctx context.Context, eventID uuid.UUID, inp
 	return err
 }
 
-func (r *PGRepository) ListHostShagun(ctx context.Context, eventID uuid.UUID) ([]HostShagunRow, error) {
+func (r *PGRepository) ListHostShagun(ctx context.Context, eventID uuid.UUID, limit, offset int) ([]HostShagunRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, channel, amount_paise, blessing_note, status, created_at
-		FROM shagun_entries WHERE event_id=$1 ORDER BY created_at DESC`, eventID)
+		FROM shagun_entries WHERE event_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`, eventID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

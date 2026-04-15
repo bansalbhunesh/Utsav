@@ -1,7 +1,9 @@
 package httpserver
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/bhune/utsav/services/api/internal/repository/guestrepo"
@@ -31,12 +33,13 @@ func (s *Server) listGuests(c *gin.Context) {
 		writeAPIError(c, http.StatusInternalServerError, "GUEST_SERVICE_UNAVAILABLE", "Guest service unavailable.")
 		return
 	}
-	list, svcErr := s.GuestService.ListGuests(c.Request.Context(), eventID)
+	limit, offset := parseLimitOffset(c)
+	list, svcErr := s.GuestService.ListGuests(c.Request.Context(), eventID, limit, offset)
 	if svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"guests": list})
+	c.JSON(http.StatusOK, gin.H{"guests": list, "limit": limit, "offset": offset})
 }
 
 func (s *Server) postGuest(c *gin.Context) {
@@ -55,6 +58,22 @@ func (s *Server) postGuest(c *gin.Context) {
 	}
 	if s.GuestService == nil {
 		writeAPIError(c, http.StatusInternalServerError, "GUEST_SERVICE_UNAVAILABLE", "Guest service unavailable.")
+		return
+	}
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if idempotencyKey == "" {
+		writeAPIError(c, http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required.")
+		return
+	}
+	rawBody, _ := json.Marshal(body)
+	fingerprint := hashFingerprint(eventID.String(), string(rawBody))
+	idempotentOK, err := s.reserveIdempotencyKey(c.Request.Context(), "guest_upsert", idempotencyKey, fingerprint)
+	if err != nil {
+		writeAPIError(c, http.StatusInternalServerError, "IDEMPOTENCY_FAILED", "Unable to validate idempotency key.")
+		return
+	}
+	if !idempotentOK {
+		writeAPIError(c, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used for a different request.")
 		return
 	}
 	guestID, svcErr := s.GuestService.UpsertGuest(c.Request.Context(), eventID, guestrepo.GuestInput{
@@ -99,6 +118,22 @@ func (s *Server) postCashShagun(c *gin.Context) {
 		writeAPIError(c, http.StatusInternalServerError, "SHAGUN_SERVICE_UNAVAILABLE", "Shagun service unavailable.")
 		return
 	}
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if idempotencyKey == "" {
+		writeAPIError(c, http.StatusBadRequest, "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required.")
+		return
+	}
+	rawBody, _ := json.Marshal(body)
+	fingerprint := hashFingerprint(eventID.String(), string(rawBody))
+	idempotentOK, err := s.reserveIdempotencyKey(c.Request.Context(), "cash_shagun_create", idempotencyKey, fingerprint)
+	if err != nil {
+		writeAPIError(c, http.StatusInternalServerError, "IDEMPOTENCY_FAILED", "Unable to validate idempotency key.")
+		return
+	}
+	if !idempotentOK {
+		writeAPIError(c, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used for a different request.")
+		return
+	}
 	svcErr := s.ShagunService.LogCashShagun(c.Request.Context(), eventID, shagunrepo.CashShagunInput{
 		GuestID:    body.GuestID,
 		GuestPhone: body.GuestPhone,
@@ -126,12 +161,13 @@ func (s *Server) listRSVPsHost(c *gin.Context) {
 		writeAPIError(c, http.StatusInternalServerError, "RSVP_SERVICE_UNAVAILABLE", "RSVP service unavailable.")
 		return
 	}
-	rows, svcErr := s.RSVPService.ListHostRSVPs(c.Request.Context(), eventID)
+	limit, offset := parseLimitOffset(c)
+	rows, svcErr := s.RSVPService.ListHostRSVPs(c.Request.Context(), eventID, limit, offset)
 	if svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"rsvps": rows})
+	c.JSON(http.StatusOK, gin.H{"rsvps": rows, "limit": limit, "offset": offset})
 }
 
 func (s *Server) listShagunHost(c *gin.Context) {
@@ -147,10 +183,11 @@ func (s *Server) listShagunHost(c *gin.Context) {
 		writeAPIError(c, http.StatusInternalServerError, "SHAGUN_SERVICE_UNAVAILABLE", "Shagun service unavailable.")
 		return
 	}
-	rows, svcErr := s.ShagunService.ListHostShagun(c.Request.Context(), eventID)
+	limit, offset := parseLimitOffset(c)
+	rows, svcErr := s.ShagunService.ListHostShagun(c.Request.Context(), eventID, limit, offset)
 	if svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"shagun": rows})
+	c.JSON(http.StatusOK, gin.H{"shagun": rows, "limit": limit, "offset": offset})
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { apiFetch, getAccessToken } from '@/lib/api'
+import { apiFetch } from '@/lib/api'
 import { useAuthStore } from '@/store/auth-store'
 
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -9,13 +9,6 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
   useEffect(() => {
     const bootstrapAuth = async () => {
-      const token = getAccessToken()
-      if (!token) {
-        setUser(null)
-        setLoading(false)
-        return
-      }
-
       try {
         const me = await apiFetch<{ id: string; phone: string; display_name?: string }>('/v1/me')
         setUser({

@@ -47,7 +47,7 @@ type Repository interface {
 	IncrementRSVPOTPAttempts(ctx context.Context, id uuid.UUID) error
 	DeleteRSVPOTPChallengeByID(ctx context.Context, id uuid.UUID) error
 	UpsertRSVPResponses(ctx context.Context, eventID uuid.UUID, phone string, items []RSVPItem) error
-	ListHostRSVPs(ctx context.Context, eventID uuid.UUID) ([]HostRSVPRow, error)
+	ListHostRSVPs(ctx context.Context, eventID uuid.UUID, limit, offset int) ([]HostRSVPRow, error)
 }
 
 type PGRepository struct {
@@ -123,10 +123,18 @@ func (r *PGRepository) UpsertRSVPResponses(ctx context.Context, eventID uuid.UUI
 	return tx.Commit(ctx)
 }
 
-func (r *PGRepository) ListHostRSVPs(ctx context.Context, eventID uuid.UUID) ([]HostRSVPRow, error) {
+func (r *PGRepository) ListHostRSVPs(ctx context.Context, eventID uuid.UUID, limit, offset int) ([]HostRSVPRow, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, guest_phone, sub_event_id, status, meal_pref, dietary, accommodation_needed, travel_mode, plus_one_names, updated_at
-		FROM rsvp_responses WHERE event_id=$1`, eventID)
+		FROM rsvp_responses WHERE event_id=$1
+		ORDER BY updated_at DESC
+		LIMIT $2 OFFSET $3`, eventID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

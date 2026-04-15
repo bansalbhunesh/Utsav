@@ -2,6 +2,7 @@ package billingservice
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -73,7 +74,10 @@ func (s *Service) MarkOrderPaid(ctx context.Context, orderID string) *ServiceErr
 		return &ServiceError{Status: http.StatusBadRequest, Code: "MISSING_ORDER_ID", Message: "Order id is required."}
 	}
 	if _, _, err := s.repo.MarkOrderPaidAndFetch(ctx, orderID); err != nil {
-		return &ServiceError{Status: http.StatusNotFound, Code: "CHECKOUT_NOT_FOUND", Message: "Checkout not found for order."}
+		if errors.Is(err, billingrepo.ErrCheckoutNotFound) {
+			return &ServiceError{Status: http.StatusNotFound, Code: "CHECKOUT_NOT_FOUND", Message: "Checkout not found for order."}
+		}
+		return &ServiceError{Status: http.StatusInternalServerError, Code: "BILLING_PERSIST_FAILED", Message: "Unable to persist billing update."}
 	}
 	return nil
 }

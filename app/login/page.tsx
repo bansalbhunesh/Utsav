@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { ChevronLeft, Loader2, Sparkles, ShieldCheck, Smartphone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { apiFetch, setTokens } from '@/lib/api'
+import { apiFetch } from '@/lib/api'
 
 export default function LoginPage() {
   const [phone, setPhone] = useState('')
@@ -36,11 +36,10 @@ export default function LoginPage() {
     setIsLoading(true)
     setError(null)
     try {
-      const data = await apiFetch<{ access_token: string; refresh_token?: string }>(
+      await apiFetch<{ user_id: string; authenticated: boolean }>(
         '/v1/auth/otp/verify',
         { method: 'POST', json: { phone, code } }
       )
-      setTokens(data.access_token, data.refresh_token)
       // Redirect to dashboard
       window.location.href = '/dashboard'
     } catch {

@@ -1,4 +1,4 @@
-import { apiFetch, clearTokens, setTokens } from './api'
+import { apiFetch, clearTokens } from './api'
 
 export const signInWithPhone = async (phone: string) => {
   try {
@@ -14,11 +14,10 @@ export const signInWithPhone = async (phone: string) => {
 
 export const verifyOtp = async (phone: string, token: string) => {
   try {
-    const data = await apiFetch<{ access_token: string; refresh_token?: string }>('/v1/auth/otp/verify', {
+    const data = await apiFetch<{ user_id: string; authenticated: boolean }>('/v1/auth/otp/verify', {
       method: 'POST',
       json: { phone, code: token },
     })
-    setTokens(data.access_token, data.refresh_token)
     return { data, error: null }
   } catch (error: unknown) {
     return { data: null, error }

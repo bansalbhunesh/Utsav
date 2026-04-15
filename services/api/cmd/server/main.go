@@ -12,6 +12,8 @@ import (
 	sentry "github.com/getsentry/sentry-go"
 	sentrygin "github.com/getsentry/sentry-go/gin"
 	"github.com/gin-gonic/gin"
+	"github.com/hibiken/asynq"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"github.com/bhune/utsav/services/api/internal/config"
 	"github.com/bhune/utsav/services/api/internal/db"
@@ -81,7 +83,14 @@ func main() {
 			r.Use(sentrygin.New(sentrygin.Options{Repanic: true}))
 		}
 	}
-	r.Use(middleware.RecoverJSON(), middleware.RequestID(), middleware.Logger(), middleware.CORS(cfg.CORSOrigins))
+	r.Use(
+		middleware.RecoverJSON(),
+		middleware.RequestID(),
+		otelgin.Middleware("utsav-api"),
+		middleware.Metrics(),
+		middleware.Logger(),
+		middleware.CORS(cfg.CORSOrigins),
+	)
 
 	srv := &httpserver.Server{
 		Pool:         pool,
@@ -104,10 +113,31 @@ func main() {
 	}
 	var otpSender otp.Sender
 	if strings.EqualFold(strings.TrimSpace(cfg.OTPProvider), "msg91") {
-		otpSender = otp.NewMSG91Sender(cfg.OTPAPIKey, cfg.OTPSenderID, "")
+		otpSender = otp.NewResilientSender(otp.NewMSG91Sender(cfg.OTPAPIKey, cfg.OTPSenderID, ""))
 	}
 	if isProd && otpSender == nil {
 		log.Fatal("OTP provider must be configured in production")
+	}
+	var otpDispatcher otp.Dispatcher = &otp.DirectDispatcher{Sender: otpSender}
+	if strings.TrimSpace(cfg.RedisURL) != "" && otpSender != nil {
+		redisOpt, err := otp.RedisClientOptFromURL(cfg.RedisURL)
+		if err != nil {
+			log.Fatalf("invalid REDIS_URL for OTP queue: %v", err)
+		}
+		asynqClient := asynq.NewClient(redisOpt)
+		otpDispatcher = otp.NewQueueDispatcher(asynqClient)
+		asynqServer := asynq.NewServer(redisOpt, asynq.Config{
+			Concurrency: 20,
+			Queues: map[string]int{
+				"critical": 10,
+				"default":  5,
+			},
+		})
+		go func() {
+			if runErr := asynqServer.Run(otp.NewOTPTaskHandler(otpSender)); runErr != nil {
+				log.Fatalf("otp queue server failed: %v", runErr)
+			}
+		}()
 	}
 	srv.AuthService = authservice.NewService(
 		authrepo.NewPGRepository(pool),
@@ -116,7 +146,7 @@ func main() {
 		cfg.DevOTPCode,
 		cfg.JWTSecret,
 		cfg.Env,
-		otpSender,
+		otpDispatcher,
 		cfg.OTPMaxAttempts,
 	)
 	srv.BillingService = billingservice.NewService(billingrepo.NewPGRepository(pool))
@@ -134,7 +164,7 @@ func main() {
 		cfg.DevOTPCode,
 		cfg.JWTSecret,
 		cfg.Env,
-		otpSender,
+		otpDispatcher,
 		cfg.OTPMaxAttempts,
 	)
 	srv.GuestService = guestservice.NewService(guestrepo.NewPGRepository(pool))
