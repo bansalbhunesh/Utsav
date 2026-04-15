@@ -14,9 +14,9 @@ import (
 	"github.com/bhune/utsav/services/api/internal/repository/guestrepo"
 )
 
-// guestListTierPrefetchLimit is the max guests loaded when filtering by priority_tier in Go
-// after rescoring (tier cannot be applied in SQL without breaking pagination vs Go's score).
-const guestListTierPrefetchLimit = 10000
+// guestListPrefetchMax caps how many guests we load when ordering or filtering must match
+// scoreGuestPriority() (tier filter, or priority sort — OFFSET must apply after Go ordering).
+const guestListPrefetchMax = 10000
 
 type ServiceError struct {
 	Status  int
@@ -40,6 +40,41 @@ func NewService(repo guestrepo.Repository) *Service {
 	return &Service{repo: repo}
 }
 
+func applyGuestPriorityScores(list []guestrepo.Guest) {
+	for i := range list {
+		score, tier, reasons := scoreGuestPriority(list[i])
+		list[i].PriorityScore = score
+		list[i].PriorityTier = tier
+		list[i].PriorityReasons = reasons
+	}
+}
+
+func sortGuestsByPriority(list []guestrepo.Guest, sort string) {
+	sortutil.SliceStable(list, func(i, j int) bool {
+		if sort == "priority_asc" {
+			if list[i].PriorityScore == list[j].PriorityScore {
+				return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name)
+			}
+			return list[i].PriorityScore < list[j].PriorityScore
+		}
+		if list[i].PriorityScore == list[j].PriorityScore {
+			return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name)
+		}
+		return list[i].PriorityScore > list[j].PriorityScore
+	})
+}
+
+func paginateGuests(list []guestrepo.Guest, offset, limit int) []guestrepo.Guest {
+	if offset >= len(list) {
+		return []guestrepo.Guest{}
+	}
+	end := offset + limit
+	if end > len(list) {
+		end = len(list)
+	}
+	return list[offset:end]
+}
+
 func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int, sort, priorityTier string) ([]guestrepo.Guest, *ServiceError) {
 	tierFilter := strings.ToLower(strings.TrimSpace(priorityTier))
 	switch tierFilter {
@@ -49,29 +84,13 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 	}
 
 	if tierFilter != "" {
-		list, err := s.repo.ListGuests(ctx, eventID, guestListTierPrefetchLimit, 0, sort)
+		list, err := s.repo.ListGuests(ctx, eventID, guestListPrefetchMax, 0, sort)
 		if err != nil {
 			return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
 		}
-		for i := range list {
-			score, tier, reasons := scoreGuestPriority(list[i])
-			list[i].PriorityScore = score
-			list[i].PriorityTier = tier
-			list[i].PriorityReasons = reasons
-		}
+		applyGuestPriorityScores(list)
 		if sort == "priority_desc" || sort == "priority_asc" {
-			sortutil.SliceStable(list, func(i, j int) bool {
-				if sort == "priority_asc" {
-					if list[i].PriorityScore == list[j].PriorityScore {
-						return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name)
-					}
-					return list[i].PriorityScore < list[j].PriorityScore
-				}
-				if list[i].PriorityScore == list[j].PriorityScore {
-					return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name)
-				}
-				return list[i].PriorityScore > list[j].PriorityScore
-			})
+			sortGuestsByPriority(list, sort)
 		}
 		filtered := make([]guestrepo.Guest, 0, len(list))
 		for _, g := range list {
@@ -79,40 +98,24 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 				filtered = append(filtered, g)
 			}
 		}
-		if offset >= len(filtered) {
-			return []guestrepo.Guest{}, nil
+		return paginateGuests(filtered, offset, limit), nil
+	}
+
+	if sort == "priority_desc" || sort == "priority_asc" {
+		list, err := s.repo.ListGuests(ctx, eventID, guestListPrefetchMax, 0, sort)
+		if err != nil {
+			return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
 		}
-		end := offset + limit
-		if end > len(filtered) {
-			end = len(filtered)
-		}
-		return filtered[offset:end], nil
+		applyGuestPriorityScores(list)
+		sortGuestsByPriority(list, sort)
+		return paginateGuests(list, offset, limit), nil
 	}
 
 	list, err := s.repo.ListGuests(ctx, eventID, limit, offset, sort)
 	if err != nil {
 		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
 	}
-	for i := range list {
-		score, tier, reasons := scoreGuestPriority(list[i])
-		list[i].PriorityScore = score
-		list[i].PriorityTier = tier
-		list[i].PriorityReasons = reasons
-	}
-	if sort == "priority_desc" || sort == "priority_asc" {
-		sortutil.SliceStable(list, func(i, j int) bool {
-			if sort == "priority_asc" {
-				if list[i].PriorityScore == list[j].PriorityScore {
-					return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name)
-				}
-				return list[i].PriorityScore < list[j].PriorityScore
-			}
-			if list[i].PriorityScore == list[j].PriorityScore {
-				return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name)
-			}
-			return list[i].PriorityScore > list[j].PriorityScore
-		})
-	}
+	applyGuestPriorityScores(list)
 	return list, nil
 }
 
