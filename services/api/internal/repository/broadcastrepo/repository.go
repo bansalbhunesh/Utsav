@@ -3,6 +3,7 @@ package broadcastrepo
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -60,10 +61,15 @@ func (r *PGRepository) List(ctx context.Context, eventID uuid.UUID) ([]Broadcast
 		var id uuid.UUID
 		var b Broadcast
 		var audience []byte
-		_ = rows.Scan(&id, &b.Title, &b.Body, &b.ImageURL, &audience, &b.AnnouncementType, &b.CreatedAt)
+		if err := rows.Scan(&id, &b.Title, &b.Body, &b.ImageURL, &audience, &b.AnnouncementType, &b.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan broadcast row: %w", err)
+		}
 		b.ID = id.String()
 		b.Audience = string(audience)
 		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate broadcast rows: %w", err)
 	}
 	return out, nil
 }

@@ -3,6 +3,7 @@ package shagunrepo
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -79,9 +80,14 @@ func (r *PGRepository) ListHostShagun(ctx context.Context, eventID uuid.UUID, li
 	for rows.Next() {
 		var id uuid.UUID
 		var row HostShagunRow
-		_ = rows.Scan(&id, &row.Channel, &row.AmountPaise, &row.Blessing, &row.Status, &row.CreatedAt)
+		if err := rows.Scan(&id, &row.Channel, &row.AmountPaise, &row.Blessing, &row.Status, &row.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan shagun row: %w", err)
+		}
 		row.ID = id.String()
 		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate shagun rows: %w", err)
 	}
 	return out, nil
 }

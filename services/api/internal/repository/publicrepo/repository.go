@@ -3,6 +3,7 @@ package publicrepo
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -105,8 +106,13 @@ func (r *PGRepository) ListSubEvents(ctx context.Context, eventID uuid.UUID) ([]
 	out := make([]PublicSubEvent, 0)
 	for rows.Next() {
 		var s PublicSubEvent
-		_ = rows.Scan(&s.ID, &s.Name, &s.SubType, &s.StartsAt, &s.EndsAt, &s.VenueLabel, &s.DressCode, &s.Description, &s.SortOrder)
+		if err := rows.Scan(&s.ID, &s.Name, &s.SubType, &s.StartsAt, &s.EndsAt, &s.VenueLabel, &s.DressCode, &s.Description, &s.SortOrder); err != nil {
+			return nil, fmt.Errorf("scan public sub event row: %w", err)
+		}
 		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate public sub event rows: %w", err)
 	}
 	return out, nil
 }
@@ -122,8 +128,13 @@ func (r *PGRepository) ListBroadcasts(ctx context.Context, eventID uuid.UUID) ([
 	out := make([]PublicBroadcast, 0)
 	for rows.Next() {
 		var b PublicBroadcast
-		_ = rows.Scan(&b.ID, &b.Title, &b.Body, &b.ImageURL, &b.Type, &b.CreatedAt)
+		if err := rows.Scan(&b.ID, &b.Title, &b.Body, &b.ImageURL, &b.Type, &b.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan public broadcast row: %w", err)
+		}
 		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate public broadcast rows: %w", err)
 	}
 	return out, nil
 }
@@ -141,8 +152,13 @@ func (r *PGRepository) ListApprovedGallery(ctx context.Context, eventID uuid.UUI
 	out := make([]PublicGalleryAsset, 0)
 	for rows.Next() {
 		var a PublicGalleryAsset
-		_ = rows.Scan(&a.ID, &a.Section, &a.ObjectKey, &a.CreatedAt)
+		if err := rows.Scan(&a.ID, &a.Section, &a.ObjectKey, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan public gallery row: %w", err)
+		}
 		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate public gallery rows: %w", err)
 	}
 	return out, nil
 }

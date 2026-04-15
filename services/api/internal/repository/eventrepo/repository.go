@@ -3,6 +3,8 @@ package eventrepo
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,21 +36,21 @@ type EventListRow struct {
 }
 
 type EventDetail struct {
-	ID          string
-	Slug        string
-	Title       string
-	EventType   string
-	CoupleA     *string
-	CoupleB     *string
-	LoveStory   *string
-	CoverURL    *string
-	DateStart   *string
-	DateEnd     *string
-	Privacy     string
-	Toggles     string
-	Branding    string
-	HostUPIVPA  *string
-	Tier        string
+	ID         string
+	Slug       string
+	Title      string
+	EventType  string
+	CoupleA    *string
+	CoupleB    *string
+	LoveStory  *string
+	CoverURL   *string
+	DateStart  *string
+	DateEnd    *string
+	Privacy    string
+	Toggles    string
+	Branding   string
+	HostUPIVPA *string
+	Tier       string
 }
 
 type PatchEventInput struct {
@@ -155,9 +157,14 @@ func (r *PGRepository) ListEvents(ctx context.Context, userID uuid.UUID) ([]Even
 		var id uuid.UUID
 		var row EventListRow
 		var updated any
-		_ = rows.Scan(&id, &row.Slug, &row.Title, &row.EventType, &row.DateStart, &updated)
+		if err := rows.Scan(&id, &row.Slug, &row.Title, &row.EventType, &row.DateStart, &updated); err != nil {
+			return nil, fmt.Errorf("scan event list row: %w", err)
+		}
 		row.ID = id.String()
 		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate event rows: %w", err)
 	}
 	return out, nil
 }
@@ -181,16 +188,32 @@ func (r *PGRepository) GetEventByID(ctx context.Context, eventID uuid.UUID) (*Ev
 }
 
 func (r *PGRepository) PatchEvent(ctx context.Context, eventID uuid.UUID, input PatchEventInput) error {
+	sets := make([]string, 0, 3)
+	args := []any{eventID}
+	idx := 2
 	if input.Title != nil {
-		_, _ = r.pool.Exec(ctx, `UPDATE events SET title=$2, updated_at=now() WHERE id=$1`, eventID, *input.Title)
+		sets = append(sets, fmt.Sprintf("title=$%d", idx))
+		args = append(args, *input.Title)
+		idx++
 	}
 	if input.Privacy != nil {
-		_, _ = r.pool.Exec(ctx, `UPDATE events SET privacy=$2, updated_at=now() WHERE id=$1`, eventID, *input.Privacy)
+		sets = append(sets, fmt.Sprintf("privacy=$%d", idx))
+		args = append(args, *input.Privacy)
+		idx++
 	}
 	if input.HostUPIVPA != nil {
-		_, _ = r.pool.Exec(ctx, `UPDATE events SET host_upi_vpa=$2, updated_at=now() WHERE id=$1`, eventID, *input.HostUPIVPA)
+		sets = append(sets, fmt.Sprintf("host_upi_vpa=$%d", idx))
+		args = append(args, *input.HostUPIVPA)
+		idx++
 	}
-	return nil
+	if len(sets) == 0 {
+		return nil
+	}
+	_, err := r.pool.Exec(ctx,
+		"UPDATE events SET "+strings.Join(sets, ", ")+", updated_at=now() WHERE id=$1",
+		args...,
+	)
+	return err
 }
 
 func (r *PGRepository) CreateSubEvent(ctx context.Context, eventID uuid.UUID, input CreateSubEventInput) (string, error) {
@@ -220,9 +243,14 @@ func (r *PGRepository) ListSubEvents(ctx context.Context, eventID uuid.UUID) ([]
 	for rows.Next() {
 		var id uuid.UUID
 		var row SubEventRow
-		_ = rows.Scan(&id, &row.Name, &row.SubType, &row.StartsAt, &row.EndsAt, &row.VenueLabel, &row.DressCode, &row.Description, &row.SortOrder)
+		if err := rows.Scan(&id, &row.Name, &row.SubType, &row.StartsAt, &row.EndsAt, &row.VenueLabel, &row.DressCode, &row.Description, &row.SortOrder); err != nil {
+			return nil, fmt.Errorf("scan sub event row: %w", err)
+		}
 		row.ID = id.String()
 		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sub event rows: %w", err)
 	}
 	return out, nil
 }

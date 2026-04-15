@@ -2,6 +2,7 @@ package galleryrepo
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -80,9 +81,14 @@ func (r *PGRepository) ListAssets(ctx context.Context, eventID uuid.UUID, status
 	for rows.Next() {
 		var id uuid.UUID
 		var a Asset
-		_ = rows.Scan(&id, &a.Section, &a.ObjectKey, &a.Status, &a.MimeType, &a.Bytes, &a.CreatedAt)
+		if err := rows.Scan(&id, &a.Section, &a.ObjectKey, &a.Status, &a.MimeType, &a.Bytes, &a.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan gallery asset row: %w", err)
+		}
 		a.ID = id.String()
 		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate gallery asset rows: %w", err)
 	}
 	return out, nil
 }

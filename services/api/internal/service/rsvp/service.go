@@ -5,11 +5,11 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/bhune/utsav/services/api/internal/auth"
 	"github.com/bhune/utsav/services/api/internal/otp"
@@ -46,6 +46,8 @@ type Service struct {
 	otpDispatcher     otp.Dispatcher
 	otpMaxAttempts    int
 }
+
+var phoneE164Regex = regexp.MustCompile(`^\+?[1-9]\d{7,14}$`)
 
 func NewService(
 	repo rsvprepo.Repository,
@@ -96,8 +98,12 @@ func (s *Service) EventIDFromSlug(ctx context.Context, slug string) (uuid.UUID, 
 }
 
 func (s *Service) RequestOTP(ctx context.Context, eventID uuid.UUID, slug, phone, clientIP string) *ServiceError {
+	phone = strings.TrimSpace(phone)
 	if phone == "" {
 		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone is required."}
+	}
+	if !phoneE164Regex.MatchString(phone) {
+		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_PHONE", Message: "Phone number must be in E.164 format."}
 	}
 	if s.otpRequestLimiter != nil {
 		allowed, err := s.otpRequestLimiter.Allow(ctx, "rsvp_otp_req:"+clientIP+"|"+strings.TrimSpace(strings.ToLower(slug))+"|"+phone)
@@ -119,14 +125,14 @@ func (s *Service) RequestOTP(ctx context.Context, eventID uuid.UUID, slug, phone
 			return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_GENERATE_FAILED", Message: "Unable to generate RSVP OTP."}
 		}
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(code), bcrypt.DefaultCost)
+	hash, err := otp.HashCode(s.jwtSecret, code)
 	if err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_HASH_FAILED", Message: "Unable to process RSVP OTP request."}
 	}
 	if err := s.repo.DeleteRSVPOTPChallenges(ctx, eventID, phone); err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_PERSIST_FAILED", Message: "Unable to save RSVP OTP challenge."}
 	}
-	if err := s.repo.InsertRSVPOTPChallenge(ctx, eventID, phone, string(hash)); err != nil {
+	if err := s.repo.InsertRSVPOTPChallenge(ctx, eventID, phone, hash); err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_PERSIST_FAILED", Message: "Unable to save RSVP OTP challenge."}
 	}
 	if s.otpDispatcher != nil {
@@ -138,6 +144,7 @@ func (s *Service) RequestOTP(ctx context.Context, eventID uuid.UUID, slug, phone
 }
 
 func (s *Service) VerifyOTP(ctx context.Context, eventID uuid.UUID, phone, code, clientIP string) (string, *ServiceError) {
+	phone = strings.TrimSpace(phone)
 	if phone == "" || code == "" {
 		return "", &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone and code are required."}
 	}
@@ -163,8 +170,10 @@ func (s *Service) VerifyOTP(ctx context.Context, eventID uuid.UUID, phone, code,
 	if s.otpMaxAttempts > 0 && ch.Attempts >= s.otpMaxAttempts {
 		return "", &ServiceError{Status: http.StatusUnauthorized, Code: "OTP_LOCKED", Message: "RSVP OTP attempts exceeded. Request a new code."}
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(ch.CodeHash), []byte(code)); err != nil {
-		_ = s.repo.IncrementRSVPOTPAttempts(ctx, ch.ID)
+	if !otp.VerifyCode(s.jwtSecret, ch.CodeHash, code) {
+		if incErr := s.repo.IncrementRSVPOTPAttempts(ctx, ch.ID); incErr != nil {
+			return "", &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_STATE_FAILED", Message: "Unable to update RSVP OTP state."}
+		}
 		return "", &ServiceError{Status: http.StatusUnauthorized, Code: "INVALID_OTP", Message: "Invalid RSVP OTP code."}
 	}
 	_ = s.repo.DeleteRSVPOTPChallengeByID(ctx, ch.ID)

@@ -2,11 +2,13 @@ package publicservice
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/bhune/utsav/services/api/internal/cache"
 	"github.com/google/uuid"
 
 	"github.com/bhune/utsav/services/api/internal/media"
@@ -24,10 +26,11 @@ func (e *ServiceError) Error() string { return e.Message }
 type Service struct {
 	repo   publicrepo.Repository
 	signer media.Signer
+	cache  cache.Cache
 }
 
-func NewService(repo publicrepo.Repository, signer media.Signer) *Service {
-	return &Service{repo: repo, signer: signer}
+func NewService(repo publicrepo.Repository, signer media.Signer, c cache.Cache) *Service {
+	return &Service{repo: repo, signer: signer, cache: c}
 }
 
 func normalizeSlug(slug string) string {
@@ -35,28 +38,61 @@ func normalizeSlug(slug string) string {
 }
 
 func (s *Service) GetEvent(ctx context.Context, slug string) (map[string]any, uuid.UUID, *ServiceError) {
+	key := "public:event:" + normalizeSlug(slug)
+	if s.cache != nil {
+		if raw, err := s.cache.Get(ctx, key); err == nil {
+			var payload struct {
+				Event map[string]any `json:"event"`
+				ID    string         `json:"id"`
+			}
+			if jsonErr := json.Unmarshal(raw, &payload); jsonErr == nil {
+				if eid, parseErr := uuid.Parse(payload.ID); parseErr == nil {
+					return payload.Event, eid, nil
+				}
+			}
+		}
+	}
 	ev, err := s.repo.GetEventBySlug(ctx, normalizeSlug(slug))
 	if err != nil {
 		return nil, uuid.Nil, &ServiceError{Status: http.StatusNotFound, Code: "NOT_FOUND", Message: "Public event not found."}
 	}
-	return map[string]any{
-		"id":             ev.ID.String(),
-		"slug":           ev.Slug,
-		"title":          ev.Title,
-		"event_type":     ev.EventType,
-		"privacy":        ev.Privacy,
-		"toggles":        string(ev.Toggles),
-		"branding":       string(ev.Branding),
-		"couple_name_a":  ev.CoupleNameA,
-		"couple_name_b":  ev.CoupleNameB,
-		"love_story":     ev.LoveStory,
+	eventPayload := map[string]any{
+		"id":              ev.ID.String(),
+		"slug":            ev.Slug,
+		"title":           ev.Title,
+		"event_type":      ev.EventType,
+		"privacy":         ev.Privacy,
+		"toggles":         string(ev.Toggles),
+		"branding":        string(ev.Branding),
+		"couple_name_a":   ev.CoupleNameA,
+		"couple_name_b":   ev.CoupleNameB,
+		"love_story":      ev.LoveStory,
 		"cover_image_url": ev.CoverImage,
-		"date_start":     ev.DateStart,
-		"date_end":       ev.DateEnd,
-	}, ev.ID, nil
+		"date_start":      ev.DateStart,
+		"date_end":        ev.DateEnd,
+	}
+	if s.cache != nil {
+		raw, _ := json.Marshal(map[string]any{"event": eventPayload, "id": ev.ID.String()})
+		_ = s.cache.Set(ctx, key, raw, 60*time.Second)
+	}
+	return eventPayload, ev.ID, nil
 }
 
 func (s *Service) ListSchedule(ctx context.Context, slug string) ([]map[string]any, uuid.UUID, *ServiceError) {
+	key := "public:schedule:" + normalizeSlug(slug)
+	if s.cache != nil {
+		if raw, err := s.cache.Get(ctx, key); err == nil {
+			var payload struct {
+				Rows []map[string]any `json:"rows"`
+				ID   string           `json:"id"`
+			}
+			if jsonErr := json.Unmarshal(raw, &payload); jsonErr == nil {
+				if eid, parseErr := uuid.Parse(payload.ID); parseErr == nil {
+					return payload.Rows, eid, nil
+				}
+			}
+		}
+	}
 	_, eid, svcErr := s.GetEvent(ctx, slug)
 	if svcErr != nil {
 		return nil, uuid.Nil, svcErr
@@ -93,10 +129,23 @@ func (s *Service) ListSchedule(ctx context.Context, slug string) ([]map[string]a
 			"happening_now": happening,
 		})
 	}
+	if s.cache != nil {
+		raw, _ := json.Marshal(map[string]any{"rows": out, "id": eid.String()})
+		_ = s.cache.Set(ctx, key, raw, 30*time.Second)
+	}
 	return out, eid, nil
 }
 
 func (s *Service) ListBroadcasts(ctx context.Context, slug string) ([]map[string]any, *ServiceError) {
+	key := "public:broadcasts:" + normalizeSlug(slug)
+	if s.cache != nil {
+		if raw, err := s.cache.Get(ctx, key); err == nil {
+			var out []map[string]any
+			if jsonErr := json.Unmarshal(raw, &out); jsonErr == nil {
+				return out, nil
+			}
+		}
+	}
 	_, eid, svcErr := s.GetEvent(ctx, slug)
 	if svcErr != nil {
 		return nil, svcErr
@@ -116,10 +165,23 @@ func (s *Service) ListBroadcasts(ctx context.Context, slug string) ([]map[string
 			"created_at": r.CreatedAt,
 		})
 	}
+	if s.cache != nil {
+		raw, _ := json.Marshal(out)
+		_ = s.cache.Set(ctx, key, raw, 60*time.Second)
+	}
 	return out, nil
 }
 
 func (s *Service) ListGallery(ctx context.Context, slug string) ([]map[string]any, *ServiceError) {
+	key := "public:gallery:" + normalizeSlug(slug)
+	if s.cache != nil {
+		if raw, err := s.cache.Get(ctx, key); err == nil {
+			var out []map[string]any
+			if jsonErr := json.Unmarshal(raw, &out); jsonErr == nil {
+				return out, nil
+			}
+		}
+	}
 	_, eid, svcErr := s.GetEvent(ctx, slug)
 	if svcErr != nil {
 		return nil, svcErr
@@ -137,6 +199,10 @@ func (s *Service) ListGallery(ctx context.Context, slug string) ([]map[string]an
 			"created_at": r.CreatedAt,
 			"url":        s.signer.PublicObjectURL(r.ObjectKey),
 		})
+	}
+	if s.cache != nil {
+		raw, _ := json.Marshal(out)
+		_ = s.cache.Set(ctx, key, raw, 120*time.Second)
 	}
 	return out, nil
 }

@@ -3,6 +3,7 @@ package billingrepo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -74,9 +75,14 @@ func (r *PGRepository) ListCheckouts(ctx context.Context, userID uuid.UUID) ([]C
 	for rows.Next() {
 		var id uuid.UUID
 		var c Checkout
-		_ = rows.Scan(&id, &c.EventID, &c.Tier, &c.OrderID, &c.Status, &c.Created)
+		if err := rows.Scan(&id, &c.EventID, &c.Tier, &c.OrderID, &c.Status, &c.Created); err != nil {
+			return nil, fmt.Errorf("scan checkout row: %w", err)
+		}
 		c.ID = id.String()
 		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate checkout rows: %w", err)
 	}
 	return out, nil
 }

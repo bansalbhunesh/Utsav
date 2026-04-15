@@ -2,6 +2,7 @@ package rsvprepo
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -144,7 +145,7 @@ func (r *PGRepository) ListHostRSVPs(ctx context.Context, eventID uuid.UUID, lim
 	for rows.Next() {
 		var id, sub uuid.UUID
 		var row HostRSVPRow
-		_ = rows.Scan(
+		if err := rows.Scan(
 			&id,
 			&row.GuestPhone,
 			&sub,
@@ -155,10 +156,15 @@ func (r *PGRepository) ListHostRSVPs(ctx context.Context, eventID uuid.UUID, lim
 			&row.TravelMode,
 			&row.PlusOneNames,
 			&row.UpdatedAt,
-		)
+		); err != nil {
+			return nil, fmt.Errorf("scan host rsvp row: %w", err)
+		}
 		row.ID = id.String()
 		row.SubEventID = sub.String()
 		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate host rsvp rows: %w", err)
 	}
 	return out, nil
 }

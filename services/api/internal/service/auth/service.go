@@ -7,11 +7,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 
 	authtoken "github.com/bhune/utsav/services/api/internal/auth"
 	"github.com/bhune/utsav/services/api/internal/otp"
@@ -57,6 +57,8 @@ type Service struct {
 	otpMaxAttempts    int
 }
 
+var phoneE164Regex = regexp.MustCompile(`^\+?[1-9]\d{7,14}$`)
+
 func NewService(
 	repo authrepo.Repository,
 	otpRequestLimiter ratelimit.Limiter,
@@ -92,8 +94,12 @@ func generateNumericOTP() (string, error) {
 }
 
 func (s *Service) RequestOTP(ctx context.Context, phone, clientIP string) *ServiceError {
+	phone = strings.TrimSpace(phone)
 	if phone == "" {
 		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone is required."}
+	}
+	if !phoneE164Regex.MatchString(phone) {
+		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_PHONE", Message: "Phone number must be in E.164 format."}
 	}
 	if s.otpRequestLimiter != nil {
 		allowed, err := s.otpRequestLimiter.Allow(ctx, "auth_otp_req:"+clientIP+"|"+phone)
@@ -120,14 +126,14 @@ func (s *Service) RequestOTP(ctx context.Context, phone, clientIP string) *Servi
 			return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_GENERATE_FAILED", Message: "Unable to generate OTP code."}
 		}
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(code), bcrypt.DefaultCost)
+	hash, err := otp.HashCode(s.jwtSecret, code)
 	if err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_HASH_FAILED", Message: "Unable to process OTP request."}
 	}
 	if err := s.repo.DeletePhoneOTPChallenges(ctx, phone); err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_PERSIST_FAILED", Message: "Unable to save OTP challenge."}
 	}
-	if err := s.repo.InsertPhoneOTPChallenge(ctx, phone, string(hash)); err != nil {
+	if err := s.repo.InsertPhoneOTPChallenge(ctx, phone, hash); err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_PERSIST_FAILED", Message: "Unable to save OTP challenge."}
 	}
 	if s.otpDispatcher != nil {
@@ -139,6 +145,7 @@ func (s *Service) RequestOTP(ctx context.Context, phone, clientIP string) *Servi
 }
 
 func (s *Service) VerifyOTP(ctx context.Context, phone, code, clientIP string) (*OTPVerifyResult, *ServiceError) {
+	phone = strings.TrimSpace(phone)
 	if phone == "" || code == "" {
 		return nil, &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone and code are required."}
 	}
@@ -164,8 +171,10 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code, clientIP string) (
 	if s.otpMaxAttempts > 0 && ch.Attempts >= s.otpMaxAttempts {
 		return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "OTP_LOCKED", Message: "OTP attempts exceeded. Request a new code."}
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(ch.CodeHash), []byte(code)); err != nil {
-		_ = s.repo.IncrementPhoneOTPAttempts(ctx, ch.ID)
+	if !otp.VerifyCode(s.jwtSecret, ch.CodeHash, code) {
+		if incErr := s.repo.IncrementPhoneOTPAttempts(ctx, ch.ID); incErr != nil {
+			return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_STATE_FAILED", Message: "Unable to update OTP state."}
+		}
 		return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "INVALID_OTP", Message: "The OTP code is invalid."}
 	}
 	_ = s.repo.DeletePhoneOTPChallengeByID(ctx, ch.ID)

@@ -27,9 +27,9 @@ type Service struct {
 }
 
 type RelationshipScoreOverview struct {
-	RankedGuests          []guestrepo.Guest `json:"ranked_guests"`
+	RankedGuests           []guestrepo.Guest `json:"ranked_guests"`
 	GuestsNeedingAttention []guestrepo.Guest `json:"guests_needing_attention"`
-	TierCounts            map[string]int    `json:"tier_counts"`
+	TierCounts             map[string]int    `json:"tier_counts"`
 }
 
 func NewService(repo guestrepo.Repository) *Service {
@@ -71,7 +71,6 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 		}
 		list = filtered
 	}
-	_ = s.repo.UpsertRelationshipScores(ctx, eventID, list)
 	return list, nil
 }
 
@@ -93,9 +92,20 @@ func (s *Service) RelationshipScoreOverview(ctx context.Context, eventID uuid.UU
 			}
 		}
 	}
-	counts, err := s.repo.RelationshipTierCounts(ctx, eventID)
-	if err != nil {
-		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to compute relationship insights."}
+	counts := map[string]int{
+		"critical":  0,
+		"important": 0,
+		"optional":  0,
+	}
+	for _, g := range ranked {
+		switch strings.ToLower(g.PriorityTier) {
+		case "critical":
+			counts["critical"]++
+		case "important":
+			counts["important"]++
+		default:
+			counts["optional"]++
+		}
 	}
 	return &RelationshipScoreOverview{
 		RankedGuests:           top,

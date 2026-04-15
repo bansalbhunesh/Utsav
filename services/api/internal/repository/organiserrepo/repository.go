@@ -2,6 +2,7 @@ package organiserrepo
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -113,9 +114,14 @@ func (r *PGRepository) ListOrganiserEvents(ctx context.Context, organiserID uuid
 	for rows.Next() {
 		var id uuid.UUID
 		var e Event
-		_ = rows.Scan(&id, &e.Slug, &e.Title, &e.DateStart)
+		if err := rows.Scan(&id, &e.Slug, &e.Title, &e.DateStart); err != nil {
+			return nil, fmt.Errorf("scan organiser event row: %w", err)
+		}
 		e.ID = id.String()
 		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate organiser event rows: %w", err)
 	}
 	return out, nil
 }
@@ -134,9 +140,14 @@ func (r *PGRepository) ListClients(ctx context.Context, organiserID uuid.UUID) (
 	for rows.Next() {
 		var id uuid.UUID
 		var c Client
-		_ = rows.Scan(&id, &c.Name, &c.ContactEmail, &c.ContactPhone, &c.Notes, &c.CreatedAt)
+		if err := rows.Scan(&id, &c.Name, &c.ContactEmail, &c.ContactPhone, &c.Notes, &c.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan organiser client row: %w", err)
+		}
 		c.ID = id.String()
 		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate organiser client rows: %w", err)
 	}
 	return out, nil
 }

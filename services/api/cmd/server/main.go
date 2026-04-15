@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	sentry "github.com/getsentry/sentry-go"
@@ -15,6 +18,7 @@ import (
 	"github.com/hibiken/asynq"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
+	"github.com/bhune/utsav/services/api/internal/cache"
 	"github.com/bhune/utsav/services/api/internal/config"
 	"github.com/bhune/utsav/services/api/internal/db"
 	"github.com/bhune/utsav/services/api/internal/httpserver"
@@ -30,11 +34,11 @@ import (
 	"github.com/bhune/utsav/services/api/internal/repository/galleryrepo"
 	"github.com/bhune/utsav/services/api/internal/repository/guestrepo"
 	"github.com/bhune/utsav/services/api/internal/repository/memorybookrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/organiserrepo"
+	"github.com/bhune/utsav/services/api/internal/repository/publicrepo"
 	"github.com/bhune/utsav/services/api/internal/repository/rsvprepo"
 	"github.com/bhune/utsav/services/api/internal/repository/shagunrepo"
 	"github.com/bhune/utsav/services/api/internal/repository/vendorrepo"
-	"github.com/bhune/utsav/services/api/internal/repository/organiserrepo"
-	"github.com/bhune/utsav/services/api/internal/repository/publicrepo"
 	authservice "github.com/bhune/utsav/services/api/internal/service/auth"
 	billingservice "github.com/bhune/utsav/services/api/internal/service/billing"
 	broadcastservice "github.com/bhune/utsav/services/api/internal/service/broadcast"
@@ -71,6 +75,7 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
+	r.MaxMultipartMemory = 8 << 20
 	if strings.TrimSpace(cfg.SentryDSN) != "" {
 		if err := sentry.Init(sentry.ClientOptions{
 			Dsn:              cfg.SentryDSN,
@@ -84,6 +89,10 @@ func main() {
 		}
 	}
 	r.Use(
+		func(c *gin.Context) {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 5*1024*1024)
+			c.Next()
+		},
 		middleware.RecoverJSON(),
 		middleware.RequestID(),
 		otelgin.Middleware("utsav-api"),
@@ -93,9 +102,9 @@ func main() {
 	)
 
 	srv := &httpserver.Server{
-		Pool:         pool,
-		Config:       cfg,
-		MediaSigner:  media.URLSigner{BaseURL: cfg.ObjectStorePublicBaseURL},
+		Pool:        pool,
+		Config:      cfg,
+		MediaSigner: media.URLSigner{BaseURL: cfg.ObjectStorePublicBaseURL},
 	}
 	window := time.Duration(cfg.RateLimitWindowSec) * time.Second
 	isProd := strings.EqualFold(strings.TrimSpace(cfg.Env), "production")
@@ -135,7 +144,7 @@ func main() {
 		})
 		go func() {
 			if runErr := asynqServer.Run(otp.NewOTPTaskHandler(otpSender)); runErr != nil {
-				log.Fatalf("otp queue server failed: %v", runErr)
+				log.Printf("WARN: otp queue server stopped: %v", runErr)
 			}
 		}()
 	}
@@ -155,7 +164,15 @@ func main() {
 	srv.GalleryService = galleryservice.NewService(galleryrepo.NewPGRepository(pool), srv.MediaSigner)
 	srv.OrganiserService = organiserservice.NewService(organiserrepo.NewPGRepository(pool))
 	srv.MemoryBookService = memorybookservice.NewService(memorybookrepo.NewPGRepository(pool))
-	srv.PublicService = publicservice.NewService(publicrepo.NewPGRepository(pool), srv.MediaSigner)
+	var publicCache cache.Cache
+	if strings.TrimSpace(cfg.RedisURL) != "" {
+		if redisCache, cacheErr := cache.NewRedisCache(cfg.RedisURL); cacheErr != nil {
+			log.Printf("WARN: redis cache disabled due to config error: %v", cacheErr)
+		} else {
+			publicCache = redisCache
+		}
+	}
+	srv.PublicService = publicservice.NewService(publicrepo.NewPGRepository(pool), srv.MediaSigner, publicCache)
 	srv.RSVPService = rsvpservice.NewService(
 		rsvprepo.NewPGRepository(pool),
 		newLimiter(cfg.RSVPOTPRequestLimit),
@@ -178,8 +195,28 @@ func main() {
 
 	addr := ":" + cfg.HTTPPort
 	log.Printf("utsav api listening on %s", addr)
-	if err := r.Run(addr); err != nil {
-		log.Fatal(err)
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           r,
+		ReadHeaderTimeout: 15 * time.Second,
+		ReadTimeout:       20 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	go func() {
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("http server failed: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Print("shutdown signal received")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("http shutdown failed: %v", err)
 	}
 }
 

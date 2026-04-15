@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -54,11 +56,20 @@ func Load() (*Config, error) {
 	}
 	cors := getenv("CORS_ORIGIN", "http://localhost:3000")
 	runMig := getenv("RUN_MIGRATIONS", "true") == "true"
+	env := getenv("ENV", "development")
+	if strings.EqualFold(strings.TrimSpace(env), "production") {
+		if strings.TrimSpace(secret) == "" || secret == "dev-insecure-change-me" {
+			log.Fatal("JWT_SECRET must be set to a strong secret in production")
+		}
+		if len(secret) < 32 {
+			log.Fatal("JWT_SECRET must be at least 32 characters in production")
+		}
+	}
 	return &Config{
 		HTTPPort:                 port,
 		DatabaseURL:              dsn,
 		MigrationsPath:           migrations,
-		Env:                      getenv("ENV", "development"),
+		Env:                      env,
 		JWTSecret:                secret,
 		DevOTPCode:               getenv("DEV_OTP_CODE", "123456"),
 		OTPProvider:              getenv("OTP_PROVIDER", ""),

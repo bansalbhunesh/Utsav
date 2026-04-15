@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hibiken/asynq"
 )
@@ -53,7 +54,7 @@ func (d *QueueDispatcher) DispatchOTP(_ context.Context, phone, code string) err
 }
 
 func NewOTPTaskHandler(sender Sender) asynq.Handler {
-	return asynq.HandlerFunc(func(_ context.Context, task *asynq.Task) error {
+	return asynq.HandlerFunc(func(ctx context.Context, task *asynq.Task) error {
 		if sender == nil {
 			return fmt.Errorf("otp sender is not configured")
 		}
@@ -61,7 +62,9 @@ func NewOTPTaskHandler(sender Sender) asynq.Handler {
 		if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 			return fmt.Errorf("decode otp task payload: %w", err)
 		}
-		return sender.SendOTP(context.Background(), payload.Phone, payload.Code)
+		sendCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		return sender.SendOTP(sendCtx, payload.Phone, payload.Code)
 	})
 }
 

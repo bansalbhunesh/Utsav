@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -27,7 +28,7 @@ type Guest struct {
 	ShagunPaise     int64      `json:"-"`
 	PriorityScore   int        `json:"priority_score"`
 	PriorityTier    string     `json:"priority_tier"`
-	PriorityReasons []string `json:"priority_reasons"`
+	PriorityReasons []string   `json:"priority_reasons"`
 }
 
 type ImportError struct {
@@ -167,11 +168,16 @@ func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID, limit,
 	out := make([]Guest, 0)
 	for rows.Next() {
 		var g Guest
-		_ = rows.Scan(
+		if err := rows.Scan(
 			&g.ID, &g.Name, &g.Phone, &g.Email, &g.Relationship, &g.Side, &g.Tags, &g.GroupID,
 			&g.RSVPYesCount, &g.RSVPTotal, &g.SubEventTotal, &g.LastRSVPAt, &g.ShagunPaise,
-		)
+		); err != nil {
+			return nil, fmt.Errorf("scan guest row: %w", err)
+		}
 		out = append(out, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate guest rows: %w", err)
 	}
 	return out, nil
 }
@@ -346,11 +352,11 @@ func (r *PGRepository) UpsertRelationshipScores(ctx context.Context, eventID uui
 func (r *PGRepository) RelationshipTierCounts(ctx context.Context, eventID uuid.UUID) (map[string]int, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT
-			COALESCE(priority_tier, 'low') AS tier,
+			COALESCE(priority_tier, 'optional') AS tier,
 			COUNT(*) AS c
 		FROM guest_relationship_scores
 		WHERE event_id = $1
-		GROUP BY COALESCE(priority_tier, 'low')
+		GROUP BY COALESCE(priority_tier, 'optional')
 	`, eventID)
 	if err != nil {
 		return nil, err

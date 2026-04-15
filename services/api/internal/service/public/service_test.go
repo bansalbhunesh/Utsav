@@ -54,7 +54,7 @@ func TestBuildUPILinkSuccess(t *testing.T) {
 			}
 			return &publicrepo.UPIContext{EventID: eid, VPA: "host@upi", Title: "Utsav Wedding"}, nil
 		},
-	}, media.URLSigner{BaseURL: "https://cdn.example.com"})
+	}, media.URLSigner{BaseURL: "https://cdn.example.com"}, nil)
 
 	out, svcErr := svc.BuildUPILink(context.Background(), "Wedding-Slug", eid, "9876543210")
 	if svcErr != nil {
@@ -75,7 +75,7 @@ func TestReportShagunRejectsWrongEvent(t *testing.T) {
 		getEventBySlugFn: func(_ context.Context, _ string) (*publicrepo.PublicEvent, error) {
 			return &publicrepo.PublicEvent{ID: eventID, Slug: "slug"}, nil
 		},
-	}, media.URLSigner{})
+	}, media.URLSigner{}, nil)
 
 	err := svc.ReportShagun(context.Background(), "slug", otherEventID, "9999999999", 501, "blessing", nil)
 	if err == nil {

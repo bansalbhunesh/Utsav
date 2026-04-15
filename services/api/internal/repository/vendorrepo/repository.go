@@ -2,6 +2,7 @@ package vendorrepo
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -55,8 +56,13 @@ func (r *PGRepository) ListVendors(ctx context.Context, eventID uuid.UUID) ([]Ve
 	for rows.Next() {
 		var created any
 		var v Vendor
-		_ = rows.Scan(&v.ID, &v.Name, &v.Category, &v.Phone, &v.Email, &v.AdvancePaise, &v.TotalPaise, &v.Notes, &created)
+		if err := rows.Scan(&v.ID, &v.Name, &v.Category, &v.Phone, &v.Email, &v.AdvancePaise, &v.TotalPaise, &v.Notes, &created); err != nil {
+			return nil, fmt.Errorf("scan vendor row: %w", err)
+		}
 		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate vendor rows: %w", err)
 	}
 	return out, nil
 }
