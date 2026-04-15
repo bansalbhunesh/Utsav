@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -271,7 +272,7 @@ func (s *Service) ReportShagun(ctx context.Context, slug string, guestEventID uu
 		return &ServiceError{Status: http.StatusForbidden, Code: "WRONG_EVENT", Message: "Guest token does not match this event."}
 	}
 	eid := guestEventID
-	paise := int64(amountINR * 100)
+	paise := int64(math.Round(amountINR * 100))
 	if paise <= 0 {
 		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_AMOUNT", Message: "Shagun amount must be greater than zero."}
 	}

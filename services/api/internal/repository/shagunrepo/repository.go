@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -40,7 +41,7 @@ func NewPGRepository(pool *pgxpool.Pool) *PGRepository {
 }
 
 func (r *PGRepository) LogCashShagun(ctx context.Context, eventID uuid.UUID, input CashShagunInput) error {
-	paise := int64(input.AmountINR * 100)
+	paise := int64(math.Round(input.AmountINR * 100))
 	var gid any
 	if input.GuestID != nil {
 		if g, err := uuid.Parse(*input.GuestID); err == nil {

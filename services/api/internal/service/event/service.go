@@ -2,10 +2,12 @@ package eventservice
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/bhune/utsav/services/api/internal/repository/eventrepo"
 )
@@ -51,6 +53,10 @@ func (s *Service) CreateEvent(ctx context.Context, input eventrepo.CreateEventIn
 	}
 	id, err := s.repo.CreateEventWithOwner(ctx, input)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return "", "", &ServiceError{Status: http.StatusConflict, Code: "SLUG_TAKEN", Message: "This slug is already in use."}
+		}
 		return "", "", &ServiceError{Status: http.StatusBadRequest, Code: "CREATE_FAILED", Message: "Unable to create event."}
 	}
 	return id, input.Slug, nil

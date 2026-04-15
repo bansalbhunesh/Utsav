@@ -40,6 +40,9 @@ func (w *Window) Allow(key string) bool {
 		w.hits[key] = kept
 		return false
 	}
+	if len(kept) == 0 {
+		delete(w.hits, key)
+	}
 	kept = append(kept, now)
 	w.hits[key] = kept
 	return true

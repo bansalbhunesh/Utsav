@@ -106,21 +106,29 @@ func (r *PGRepository) UpsertRSVPResponses(ctx context.Context, eventID uuid.UUI
 	}
 	defer tx.Rollback(ctx)
 
+	if len(items) == 0 {
+		return tx.Commit(ctx)
+	}
+
+	const q = `
+		INSERT INTO rsvp_responses (
+			event_id, guest_phone, sub_event_id, status, meal_pref, dietary, accommodation_needed, travel_mode, plus_one_names
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT (event_id, guest_phone, sub_event_id) DO UPDATE SET
+			status=EXCLUDED.status, meal_pref=EXCLUDED.meal_pref, dietary=EXCLUDED.dietary,
+			accommodation_needed=EXCLUDED.accommodation_needed, travel_mode=EXCLUDED.travel_mode,
+			plus_one_names=EXCLUDED.plus_one_names, updated_at=now()`
+	batch := &pgx.Batch{}
 	for _, it := range items {
-		_, err = tx.Exec(ctx, `
-			INSERT INTO rsvp_responses (
-				event_id, guest_phone, sub_event_id, status, meal_pref, dietary, accommodation_needed, travel_mode, plus_one_names
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-			ON CONFLICT (event_id, guest_phone, sub_event_id) DO UPDATE SET
-				status=EXCLUDED.status, meal_pref=EXCLUDED.meal_pref, dietary=EXCLUDED.dietary,
-				accommodation_needed=EXCLUDED.accommodation_needed, travel_mode=EXCLUDED.travel_mode,
-				plus_one_names=EXCLUDED.plus_one_names, updated_at=now()`,
-			eventID, phone, it.SubEventID, it.Status, it.MealPref, it.Dietary, it.AccommodationNeeded, it.TravelMode, it.PlusOneNames)
-		if err != nil {
+		batch.Queue(q, eventID, phone, it.SubEventID, it.Status, it.MealPref, it.Dietary, it.AccommodationNeeded, it.TravelMode, it.PlusOneNames)
+	}
+	br := tx.SendBatch(ctx, batch)
+	defer br.Close()
+	for range items {
+		if _, err := br.Exec(); err != nil {
 			return err
 		}
 	}
-
 	return tx.Commit(ctx)
 }
 

@@ -51,7 +51,7 @@ type GuestInput struct {
 }
 
 type Repository interface {
-	ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int, sort, priorityTier string) ([]Guest, error)
+	ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int, sort string) ([]Guest, error)
 	UpsertGuest(ctx context.Context, eventID uuid.UUID, input GuestInput) (string, error)
 	ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, rawCSV string) (*ImportResult, error)
 }
@@ -64,9 +64,12 @@ func NewPGRepository(pool *pgxpool.Pool) *PGRepository {
 	return &PGRepository{pool: pool}
 }
 
-func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int, sort, priorityTier string) ([]Guest, error) {
-	if limit <= 0 || limit > 200 {
+func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int, sort string) ([]Guest, error) {
+	if limit <= 0 {
 		limit = 50
+	}
+	if limit > 10000 {
+		limit = 10000
 	}
 	if offset < 0 {
 		offset = 0
@@ -83,12 +86,6 @@ func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID, limit,
 		orderClause = "rsvp_yes_count DESC, g.name ASC"
 	case "shagun_desc":
 		orderClause = "total_shagun_paise DESC, g.name ASC"
-	}
-	tier := strings.ToLower(strings.TrimSpace(priorityTier))
-	switch tier {
-	case "critical", "important", "optional":
-	default:
-		tier = ""
 	}
 	rows, err := r.pool.Query(ctx, `
 		WITH guest_enriched AS (
@@ -167,13 +164,8 @@ func (r *PGRepository) ListGuests(ctx context.Context, eventID uuid.UUID, limit,
 			g.id, g.name, g.phone, g.email, g.relationship, g.side, g.tags, g.group_id,
 			g.rsvp_yes_count, g.rsvp_total_count, g.sub_event_total, g.latest_rsvp_at, g.total_shagun_paise
 		FROM guest_enriched g
-		WHERE
-			$2 = '' OR
-			($2 = 'critical' AND g.priority_score >= 80) OR
-			($2 = 'important' AND g.priority_score >= 50 AND g.priority_score < 80) OR
-			($2 = 'optional' AND g.priority_score < 50)
 		ORDER BY `+orderClause+`
-		LIMIT $3 OFFSET $4`, eventID, tier, limit, offset)
+		LIMIT $2 OFFSET $3`, eventID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

@@ -70,6 +70,9 @@ func Load() (*Config, error) {
 	otpSecret := strings.TrimSpace(os.Getenv("OTP_SECRET"))
 	if otpSecret == "" {
 		otpSecret = secret
+		if !isProd {
+			log.Printf("WARN: OTP_SECRET is unset; using JWT_SECRET for OTP hashing. Set OTP_SECRET so OTP verification stays valid when JWT_SECRET is rotated.")
+		}
 	}
 	if isProd {
 		if otpSecret == "" || otpSecret == "dev-insecure-change-me" {
