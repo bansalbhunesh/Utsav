@@ -64,24 +64,24 @@ func Load() (*Config, error) {
 	if port == "" {
 		port = getenv("HTTP_PORT", "8080")
 	}
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://utsav:utsav@localhost:5432/utsav?sslmode=disable"
-	}
+	dsn := strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	dsnRead := strings.TrimSpace(os.Getenv("DATABASE_READ_URL"))
 	migrations := getenv("MIGRATIONS_PATH", "../../db/migrations")
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		secret = "dev-insecure-change-me"
-	}
-	cors := getenv("CORS_ORIGIN", "http://localhost:3000")
+	secret := strings.TrimSpace(os.Getenv("JWT_SECRET"))
+	cors := strings.TrimSpace(os.Getenv("CORS_ORIGIN"))
 	runMig := getenv("RUN_MIGRATIONS", "true") == "true"
 	env := getenv("ENV", "development")
 	isProd := strings.EqualFold(strings.TrimSpace(env), "production")
+	if strings.TrimSpace(dsn) == "" {
+		log.Fatal("DATABASE_URL is required")
+	}
+	if strings.TrimSpace(secret) == "" {
+		log.Fatal("JWT_SECRET is required")
+	}
+	if strings.TrimSpace(cors) == "" {
+		log.Fatal("CORS_ORIGIN is required")
+	}
 	if isProd {
-		if strings.TrimSpace(secret) == "" || secret == "dev-insecure-change-me" {
-			log.Fatal("JWT_SECRET must be set to a strong secret in production")
-		}
 		if len(secret) < 32 {
 			log.Fatal("JWT_SECRET must be at least 32 characters in production")
 		}
@@ -94,7 +94,7 @@ func Load() (*Config, error) {
 		}
 	}
 	if isProd {
-		if otpSecret == "" || otpSecret == "dev-insecure-change-me" {
+		if otpSecret == "" {
 			log.Fatal("OTP_SECRET must be set to a strong secret in production (independent of JWT rotation)")
 		}
 		if len(otpSecret) < 32 {
@@ -104,6 +104,17 @@ func Load() (*Config, error) {
 			log.Fatal("OTP_SECRET must differ from JWT_SECRET in production so rotating JWT does not break in-flight OTP verification")
 		}
 	}
+	razorpayKeyID := strings.TrimSpace(os.Getenv("RAZORPAY_KEY_ID"))
+	razorpayWebhookSecret := strings.TrimSpace(os.Getenv("RAZORPAY_WEBHOOK_SECRET"))
+	if isProd {
+		if razorpayKeyID == "" {
+			log.Fatal("RAZORPAY_KEY_ID is required in production")
+		}
+		if razorpayWebhookSecret == "" {
+			log.Fatal("RAZORPAY_WEBHOOK_SECRET is required in production")
+		}
+	}
+
 	metricsPublicRaw := strings.TrimSpace(os.Getenv("METRICS_PUBLIC"))
 	publicMetrics := !isProd
 	switch strings.ToLower(metricsPublicRaw) {
@@ -149,11 +160,11 @@ func Load() (*Config, error) {
 		OTPSenderID:              getenv("OTP_SENDER_ID", ""),
 		CORSOrigins:              []string{cors},
 		RunMigrations:            runMig,
-		ObjectStorePublicBaseURL: getenv("OBJECT_STORE_PUBLIC_BASE_URL", "http://127.0.0.1:9000/utsav"),
+		ObjectStorePublicBaseURL: getenv("OBJECT_STORE_PUBLIC_BASE_URL", ""),
 		ObjectStoreBucket:        getenv("OBJECT_STORE_BUCKET", "utsav"),
 		ObjectStoreRegion:        getenv("OBJECT_STORE_REGION", "auto"),
-		RazorpayKeyID:            getenv("RAZORPAY_KEY_ID", "rzp_test_stub"),
-		RazorpayWebhookSecret:    getenv("RAZORPAY_WEBHOOK_SECRET", "rzp_webhook_secret_stub"),
+		RazorpayKeyID:            razorpayKeyID,
+		RazorpayWebhookSecret:    razorpayWebhookSecret,
 		RedisURL:                 getenv("REDIS_URL", ""),
 		UpstashRESTURL:           getenv("UPSTASH_REDIS_REST_URL", ""),
 		UpstashRESTToken:         getenv("UPSTASH_REDIS_REST_TOKEN", ""),

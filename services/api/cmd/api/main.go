@@ -209,7 +209,7 @@ func main() {
 	if isProd && (strings.TrimSpace(cfg.UpstashRESTURL) == "" || strings.TrimSpace(cfg.UpstashRESTToken) == "") {
 		log.Fatal("Upstash Redis must be configured in production for distributed rate limiting")
 	}
-	if isProd && (strings.TrimSpace(cfg.RazorpayWebhookSecret) == "" || strings.TrimSpace(cfg.RazorpayWebhookSecret) == "rzp_webhook_secret_stub") {
+	if isProd && strings.TrimSpace(cfg.RazorpayWebhookSecret) == "" {
 		log.Fatal("RAZORPAY_WEBHOOK_SECRET must be set in production")
 	}
 	newLimiter := func(max int) ratelimit.Limiter {

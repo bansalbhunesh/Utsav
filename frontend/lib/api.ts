@@ -1,9 +1,16 @@
 // Authoritative API bridge for UTSAV v1.5
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.trim()
+
+function requireApiBaseUrl(): string {
+  if (!API_BASE_URL) {
+    throw new Error('NEXT_PUBLIC_API_URL is required')
+  }
+  return API_BASE_URL
+}
 
 export function clearTokens() {
   if (typeof window === "undefined") return
-  fetch(`${API_BASE_URL}/v1/auth/logout`, {
+  fetch(`${requireApiBaseUrl()}/v1/auth/logout`, {
     method: 'POST',
     credentials: 'include',
   }).catch(() => {
@@ -53,7 +60,7 @@ async function performFetch<T>(
     options.body = JSON.stringify(options.json)
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+  const response = await fetch(`${requireApiBaseUrl()}${endpoint}`, {
     ...options,
     headers,
     credentials: 'include',
@@ -81,7 +88,7 @@ async function parseApiError(response: Response): Promise<ApiError> {
 
 async function refreshAccessToken(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE_URL}/v1/auth/refresh`, {
+    const response = await fetch(`${requireApiBaseUrl()}/v1/auth/refresh`, {
       method: 'POST',
       credentials: 'include',
     })
@@ -154,7 +161,7 @@ export async function guestApiFetch<T>(
     options.body = JSON.stringify(options.json)
   }
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+  const response = await fetch(`${requireApiBaseUrl()}${endpoint}`, {
     ...options,
     headers,
   })

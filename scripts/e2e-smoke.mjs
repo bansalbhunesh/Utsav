@@ -1,4 +1,8 @@
-const baseUrl = process.env.E2E_BASE_URL?.trim() || "http://127.0.0.1:3000";
+const baseUrl = process.env.E2E_BASE_URL?.trim();
+if (!baseUrl) {
+  console.error("E2E_BASE_URL is required");
+  process.exit(1);
+}
 const paths = ["/", "/login"];
 
 async function check(path) {

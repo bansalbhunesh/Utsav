@@ -10,7 +10,7 @@ docker-down:
 api:
 	cd services/api && \
 	  MIGRATIONS_PATH=../../db/migrations \
-	  DATABASE_URL=postgres://utsav:utsav@127.0.0.1:5432/utsav?sslmode=disable \
+	  DATABASE_URL="$${DATABASE_URL:?DATABASE_URL is required}" \
 	  PORT=8080 \
 	  HTTP_PORT=8080 \
 	  go run ./cmd/api
