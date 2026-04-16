@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { guestApiFetch, setGuestToken } from "@/lib/api";
+import { guestApiFetch, guestPublicFetch } from "@/lib/api";
 
 type SubEvent = { id: string; name: string };
 
@@ -19,8 +19,9 @@ export default function GuestRSVPPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const sc = await fetch(`/v1/public/events/${s}/schedule`).then((r) => r.json());
-        const list = (sc as { sub_events?: SubEvent[] }).sub_events || [];
+        const r = await guestPublicFetch(`/v1/public/events/${s}/schedule`);
+        const sc = (await r.json()) as { sub_events?: SubEvent[] };
+        const list = sc.sub_events || [];
         setSubs(list);
         const init: Record<string, string> = {};
         for (const se of list) init[se.id] = "yes";
@@ -33,13 +34,17 @@ export default function GuestRSVPPage() {
 
   async function verify() {
     setMsg(null);
-    const d = await fetch(`/v1/public/events/${s}/rsvp/otp/verify`, {
+    const r = await guestPublicFetch(`/v1/public/events/${s}/rsvp/otp/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ phone, code }),
-    }).then((r) => r.json());
-    if (!d.guest_access_token) throw new Error(JSON.stringify(d));
-    setGuestToken(d.guest_access_token);
+    });
+    const d = (await r.json()) as { ok?: boolean; error?: { message?: string } };
+    if (!r.ok) {
+      const msg = d.error?.message || JSON.stringify(d);
+      throw new Error(msg);
+    }
+    if (!d.ok) throw new Error("Verification failed.");
     setMsg("Verified. Submit RSVP below.");
   }
 
@@ -60,7 +65,17 @@ export default function GuestRSVPPage() {
       </Link>
       <h1 className="text-xl font-semibold text-white">RSVP</h1>
       <input className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-white" value={phone} onChange={(e) => setPhone(e.target.value)} />
-      <button type="button" className="rounded-lg bg-zinc-800 px-4 py-2 text-sm" onClick={() => void fetch(`/v1/public/events/${s}/rsvp/otp/request`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone }) }).then(() => setMsg("OTP sent (dev: 123456)"))}>
+      <button
+        type="button"
+        className="rounded-lg bg-zinc-800 px-4 py-2 text-sm"
+        onClick={() =>
+          void guestPublicFetch(`/v1/public/events/${s}/rsvp/otp/request`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ phone }),
+          }).then(() => setMsg("OTP sent (dev: 123456)"))
+        }
+      >
         Request OTP
       </button>
       <input className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-white" value={code} onChange={(e) => setCode(e.target.value)} />

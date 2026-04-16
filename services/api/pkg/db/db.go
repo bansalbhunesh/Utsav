@@ -44,9 +44,15 @@ func Connect(ctx context.Context, pc PoolConfig) (*pgxpool.Pool, error) {
 	}
 	cfg.MaxConns = maxC
 	cfg.MinConns = minC
-	cfg.MaxConnLifetime = 30 * time.Minute
-	cfg.MaxConnIdleTime = 5 * time.Minute
+	cfg.MaxConnLifetime = 5 * time.Minute
+	cfg.MaxConnIdleTime = 1 * time.Minute
 	cfg.HealthCheckPeriod = 1 * time.Minute
+	if cfg.ConnConfig != nil {
+		// TCP + Postgres handshake timeout for *new* connections only (not pool checkout wait).
+		cfg.ConnConfig.ConnectTimeout = 2 * time.Second
+	}
+	// pgxpool v5 has no separate ConnAcquireTimeout: waiting for a free conn shares the context passed to
+	// Query/Begin/Acquire. Use context.WithTimeout on handlers or services so saturated pools fail when ctx expires.
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = map[string]string{}
 	}

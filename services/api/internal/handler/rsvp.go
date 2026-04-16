@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/bhune/utsav/services/api/internal/metrics"
 	"github.com/bhune/utsav/services/api/internal/model"
 	rsvpservice "github.com/bhune/utsav/services/api/internal/service/rsvp"
 )
@@ -61,10 +62,13 @@ func (s *Server) postPublicRSVPOTPVerify(c *gin.Context) {
 	}
 	tok, svcErr := s.RSVPService.VerifyOTP(c.Request.Context(), eid, body.Phone, body.Code, c.ClientIP())
 	if svcErr != nil {
+		metrics.OTPVerify("rsvp", metrics.ResultLabel(svcErr.Code))
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"guest_access_token": tok})
+	metrics.OTPVerify("rsvp", "success")
+	s.setGuestTokenCookie(c, tok)
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (s *Server) postPublicRSVP(c *gin.Context) {

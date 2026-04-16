@@ -1,4 +1,8 @@
 // Authoritative API bridge for UTSAV v1.5
+//
+// NEXT_PUBLIC_API_URL must be the real API origin (e.g. https://api.example.com), not a same-origin proxy
+// unless that proxy forwards Set-Cookie and CORS correctly. Guest + host auth use cookies with
+// credentials: 'include', so the browser must call the API host that issued the cookies.
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.trim()
 
 function requireApiBaseUrl(): string {
@@ -18,20 +22,15 @@ export function clearTokens() {
   })
 }
 
-// --- Guest Session Management ---
-const guestTokenKey = "utsav_guest_token";
-
-export const setGuestToken = (token: string) => {
-  if (typeof window !== "undefined") {
-    localStorage.setItem(guestTokenKey, token);
-  }
-}
-
-export const getGuestToken = (): string | null => {
-  if (typeof window !== "undefined") {
-    return localStorage.getItem(guestTokenKey);
-  }
-  return null;
+/** Public guest flows (RSVP OTP, UPI, shagun): HttpOnly `guest_token` cookie — no localStorage. */
+export async function guestPublicFetch(
+  path: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  return fetch(`${requireApiBaseUrl()}${path}`, {
+    ...init,
+    credentials: 'include',
+  })
 }
 
 // --- Authorized API Fetcher (Host) ---
@@ -144,18 +143,13 @@ export async function apiFetch<T>(
   }
 }
 
-// --- Guest API Fetcher (RSVP/OTP) ---
+// --- Guest API Fetcher (RSVP / UPI / shagun) — uses HttpOnly guest_token cookie ---
 export async function guestApiFetch<T>(
   endpoint: string, 
   options: RequestInit & { json?: Record<string, unknown> | unknown } = {}
 ): Promise<T> {
   const headers = new Headers(options.headers)
-  const token = getGuestToken()
-  
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`)
-  }
-  
+
   if (options.json !== undefined) {
     headers.set('Content-Type', 'application/json')
     options.body = JSON.stringify(options.json)
@@ -164,11 +158,12 @@ export async function guestApiFetch<T>(
   const response = await fetch(`${requireApiBaseUrl()}${endpoint}`, {
     ...options,
     headers,
+    credentials: 'include',
   })
 
   if (!response.ok) {
     throw await parseApiError(response)
   }
 
-  return response.json()
+  return response.json() as Promise<T>
 }

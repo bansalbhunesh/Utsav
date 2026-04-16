@@ -54,6 +54,17 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	return loadWithMode(false)
+}
+
+// LoadWorker is [Load] with UTSAV_WORKER=1 semantics: same env parsing, but skips
+// API-only production requirements (CORS, Razorpay, OTP provider, distinct OTP_SECRET).
+// Use for cmd/worker background jobs only.
+func LoadWorker() (*Config, error) {
+	return loadWithMode(true)
+}
+
+func loadWithMode(workerMode bool) (*Config, error) {
 	// Load optional local env file for development.
 	// In production (Render) environment variables are injected by the platform.
 	if envRaw := strings.TrimSpace(os.Getenv("ENV")); envRaw == "" || !strings.EqualFold(envRaw, "production") {
@@ -78,8 +89,11 @@ func Load() (*Config, error) {
 	if strings.TrimSpace(secret) == "" {
 		log.Fatal("JWT_SECRET is required")
 	}
-	if strings.TrimSpace(cors) == "" {
+	if strings.TrimSpace(cors) == "" && !workerMode {
 		log.Fatal("CORS_ORIGIN is required")
+	}
+	if strings.TrimSpace(cors) == "" && workerMode {
+		cors = "http://127.0.0.1:1"
 	}
 	if isProd {
 		if len(secret) < 32 {
@@ -93,7 +107,7 @@ func Load() (*Config, error) {
 			log.Printf("WARN: OTP_SECRET is unset; using JWT_SECRET for OTP hashing. Set OTP_SECRET so OTP verification stays valid when JWT_SECRET is rotated.")
 		}
 	}
-	if isProd {
+	if isProd && !workerMode {
 		if otpSecret == "" {
 			log.Fatal("OTP_SECRET must be set to a strong secret in production (independent of JWT rotation)")
 		}
@@ -106,7 +120,7 @@ func Load() (*Config, error) {
 	}
 	razorpayKeyID := strings.TrimSpace(os.Getenv("RAZORPAY_KEY_ID"))
 	razorpayWebhookSecret := strings.TrimSpace(os.Getenv("RAZORPAY_WEBHOOK_SECRET"))
-	if isProd {
+	if isProd && !workerMode {
 		if razorpayKeyID == "" {
 			log.Fatal("RAZORPAY_KEY_ID is required in production")
 		}

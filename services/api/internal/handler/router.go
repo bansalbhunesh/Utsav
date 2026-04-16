@@ -14,12 +14,15 @@ func (s *Server) Mount(r *gin.Engine) {
 	v1.GET("/healthz", s.healthz)
 	v1.GET("/readyz", s.readyz)
 
-	v1.POST("/auth/otp/request", s.postOTPRequest)
-	v1.POST("/auth/otp/verify", s.postOTPVerify)
-	v1.POST("/auth/refresh", s.postRefresh)
-	v1.POST("/auth/logout", s.postLogout)
+	vg := v1.Group("")
+	vg.Use(s.requireDBAvailable())
 
-	authed := v1.Group("/")
+	vg.POST("/auth/otp/request", s.postOTPRequest)
+	vg.POST("/auth/otp/verify", s.postOTPVerify)
+	vg.POST("/auth/refresh", s.postRefresh)
+	vg.POST("/auth/logout", s.postLogout)
+
+	authed := vg.Group("/")
 	authed.Use(s.requireUserMiddleware())
 	authed.GET("/me", s.getMe)
 
@@ -56,18 +59,18 @@ func (s *Server) Mount(r *gin.Engine) {
 	eventAuthed.POST("/memory-book/generate", s.postMemoryBookGenerate)
 	eventAuthed.POST("/memory-book/export", s.postMemoryBookExport)
 
-	v1.GET("/public/events/:slug", s.getPublicEvent)
-	v1.GET("/public/events/:slug/schedule", s.getPublicSchedule)
-	v1.GET("/public/events/:slug/gallery", s.getPublicGallery)
-	v1.GET("/public/events/:slug/broadcasts", s.getPublicBroadcasts)
-	v1.GET("/public/events/:slug/upi-link", s.getPublicUPILink)
+	vg.GET("/public/events/:slug", s.getPublicEvent)
+	vg.GET("/public/events/:slug/schedule", s.getPublicSchedule)
+	vg.GET("/public/events/:slug/gallery", s.getPublicGallery)
+	vg.GET("/public/events/:slug/broadcasts", s.getPublicBroadcasts)
+	vg.GET("/public/events/:slug/upi-link", s.getPublicUPILink)
 
-	v1.POST("/public/events/:slug/rsvp/otp/request", s.postPublicRSVPOTPRequest)
-	v1.POST("/public/events/:slug/rsvp/otp/verify", s.postPublicRSVPOTPVerify)
-	v1.POST("/public/events/:slug/rsvp", s.postPublicRSVP)
-	v1.POST("/public/events/:slug/shagun/report", s.postPublicShagunReport)
+	vg.POST("/public/events/:slug/rsvp/otp/request", s.postPublicRSVPOTPRequest)
+	vg.POST("/public/events/:slug/rsvp/otp/verify", s.postPublicRSVPOTPVerify)
+	vg.POST("/public/events/:slug/rsvp", s.postPublicRSVP)
+	vg.POST("/public/events/:slug/shagun/report", s.postPublicShagunReport)
 
-	v1.GET("/public/memory/:slug", s.getPublicMemoryBook)
+	vg.GET("/public/memory/:slug", s.getPublicMemoryBook)
 
 	authed.POST("/organiser/profile", s.postOrganiserProfile)
 	authed.GET("/organiser/me", s.getOrganiserMe)
@@ -79,5 +82,5 @@ func (s *Server) Mount(r *gin.Engine) {
 
 	authed.POST("/billing/checkout", s.postBillingCheckout)
 	authed.GET("/billing/checkouts", s.listBillingCheckouts)
-	v1.POST("/billing/webhook/razorpay", s.postRazorpayWebhook)
+	vg.POST("/billing/webhook/razorpay", s.postRazorpayWebhook)
 }

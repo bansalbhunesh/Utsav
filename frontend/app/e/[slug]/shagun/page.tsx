@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
-import { getGuestToken, guestApiFetch } from "@/lib/api";
+import { guestApiFetch } from "@/lib/api";
 
 export default function GuestShagunPage() {
   const { slug } = useParams();
@@ -15,15 +15,12 @@ export default function GuestShagunPage() {
 
   async function loadUpi() {
     setMsg(null);
-    if (!getGuestToken()) {
-      setMsg("Verify RSVP first (guest token required).");
-      return;
+    try {
+      const d = await guestApiFetch<{ upi_uri: string }>(`/v1/public/events/${s}/upi-link`);
+      setUpi(String(d.upi_uri));
+    } catch {
+      setMsg("Verify RSVP first (guest session required) or try again.");
     }
-    const d = await fetch(`/v1/public/events/${s}/upi-link`, {
-      headers: { Authorization: `Bearer ${getGuestToken()}` },
-    }).then((r) => r.json());
-    if (d.error) throw new Error(d.error);
-    setUpi(String(d.upi_uri));
   }
 
   async function report() {

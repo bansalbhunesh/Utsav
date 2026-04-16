@@ -20,6 +20,8 @@ import (
 
 	"github.com/bhune/utsav/services/api/pkg/cache"
 	"github.com/bhune/utsav/services/api/internal/config"
+	"github.com/bhune/utsav/services/api/internal/metrics"
+	"github.com/bhune/utsav/services/api/internal/telemetry"
 	"github.com/bhune/utsav/services/api/pkg/db"
 	"github.com/bhune/utsav/services/api/internal/handler"
 	"github.com/bhune/utsav/services/api/pkg/media"
@@ -51,75 +53,7 @@ import (
 	rsvpservice "github.com/bhune/utsav/services/api/internal/service/rsvp"
 	shagunservice "github.com/bhune/utsav/services/api/internal/service/shagun"
 	vendorservice "github.com/bhune/utsav/services/api/internal/service/vendor"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-func startIdempotencyKeyCleanup(ctx context.Context, pool *pgxpool.Pool) {
-	go func() {
-		t := time.NewTicker(1 * time.Hour)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				_, err := pool.Exec(cctx, `DELETE FROM idempotency_keys WHERE expires_at < now()`)
-				cancel()
-				if err != nil {
-					log.Printf("WARN: idempotency_keys cleanup: %v", err)
-				}
-			}
-		}
-	}()
-}
-
-func startWebhookDeliveriesCleanup(ctx context.Context, pool *pgxpool.Pool) {
-	go func() {
-		t := time.NewTicker(24 * time.Hour)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-				_, err := pool.Exec(cctx, `DELETE FROM webhook_deliveries WHERE created_at < now() - interval '90 days'`)
-				cancel()
-				if err != nil {
-					log.Printf("WARN: webhook_deliveries cleanup: %v", err)
-				}
-			}
-		}
-	}()
-}
-
-func startWebhookRetryWorker(ctx context.Context, billing *billingservice.Service) {
-	if billing == nil {
-		return
-	}
-	go func() {
-		t := time.NewTicker(1 * time.Minute)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				cctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-				processed, svcErr := billing.RetryPendingWebhookDeliveries(cctx, "razorpay", 25)
-				cancel()
-				if svcErr != nil {
-					log.Printf("WARN: webhook retry worker: %s", svcErr.Message)
-					continue
-				}
-				if processed > 0 {
-					log.Printf("webhook retry worker processed=%d", processed)
-				}
-			}
-		}
-	}()
-}
 
 func main() {
 	cfg, err := config.Load()
@@ -127,6 +61,15 @@ func main() {
 		log.Fatal(err)
 	}
 	ctx := context.Background()
+	tracerShutdown := telemetry.SetupTracer(ctx)
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tracerShutdown(sctx); err != nil {
+			log.Printf("otel shutdown: %v", err)
+		}
+	}()
+
 	isProd := strings.EqualFold(strings.TrimSpace(cfg.Env), "production")
 	pool, err := db.Connect(ctx, db.PoolConfig{
 		DatabaseURL:           cfg.DatabaseURL,
@@ -156,15 +99,13 @@ func main() {
 		defer rp.Close()
 	}
 
+	metrics.RegisterAPI(pool, readPool)
+
 	if cfg.RunMigrations {
 		if err := migrate.Up(cfg.DatabaseURL, cfg.MigrationsPath); err != nil {
 			log.Fatalf("migrate: %v", err)
 		}
 	}
-	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
-	defer cleanupCancel()
-	startIdempotencyKeyCleanup(cleanupCtx, pool)
-	startWebhookDeliveriesCleanup(cleanupCtx, pool)
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
@@ -267,7 +208,6 @@ func main() {
 		cfg.OTPMaxAttempts,
 	)
 	srv.BillingService = billingservice.NewService(billingrepo.NewPGRepository(pool))
-	startWebhookRetryWorker(cleanupCtx, srv.BillingService)
 	srv.BroadcastService = broadcastservice.NewService(broadcastrepo.NewPGRepository(pool))
 	srv.EventService = eventservice.NewService(eventrepo.NewPGRepository(pool))
 	srv.GalleryService = galleryservice.NewService(galleryrepo.NewPGRepository(pool), srv.MediaSigner)
@@ -324,7 +264,6 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Print("shutdown signal received")
-	cleanupCancel()
 	if asynqServer != nil {
 		asynqServer.Shutdown()
 	}

@@ -7,12 +7,7 @@ func KeyRelationshipScoreOverview(eventID uuid.UUID) string {
 	return "rel_score_overview:" + eventID.String()
 }
 
-// PrefixGuestListForEvent matches all guest list page keys for an event (for SCAN invalidation).
-func PrefixGuestListForEvent(eventID uuid.UUID) string {
-	return "guestlist:" + eventID.String() + ":"
-}
-
-// KeyGuestListNamespaceVersion is a monotonic namespace version for guest list cache keys.
+// KeyGuestListNamespaceVersion is the Redis counter key (INCR) for guest list cache namespace.
 func KeyGuestListNamespaceVersion(eventID uuid.UUID) string {
 	return "guestlist_nsver:" + eventID.String()
 }

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -77,6 +79,10 @@ type Server struct {
 	ReadPool     *pgxpool.Pool // replica pool for read paths; equals Pool when DATABASE_READ_URL unset
 	Cache        cache.Cache
 	Config       *config.Config
+
+	dbReady      atomic.Bool
+	dbFailStreak atomic.Uint32
+	dbHealthOnce sync.Once
 	MediaSigner  media.Signer
 	AuthService  *authservice.Service
 	BillingService *billingservice.Service
@@ -250,12 +256,11 @@ func (s *Server) requireEventAccess(c *gin.Context) (userID uuid.UUID, eventID u
 }
 
 func (s *Server) guestBearer(c *gin.Context) (eventID uuid.UUID, phone string, ok bool) {
-	h := c.GetHeader("Authorization")
-	if !strings.HasPrefix(strings.ToLower(h), "bearer ") {
+	raw := strings.TrimSpace(guestTokenFromRequest(c))
+	if raw == "" {
 		writeAPIError(c, http.StatusUnauthorized, "UNAUTHORIZED", "Missing guest access token.")
 		return uuid.Nil, "", false
 	}
-	raw := strings.TrimSpace(h[7:])
 	eid, ph, err := auth.ParseGuestToken(raw, []byte(s.Config.JWTSecret))
 	if err != nil {
 		writeAPIError(c, http.StatusUnauthorized, "INVALID_GUEST_TOKEN", "Guest session is invalid or expired.")

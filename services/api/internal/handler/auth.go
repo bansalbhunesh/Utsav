@@ -8,17 +8,51 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/bhune/utsav/services/api/internal/metrics"
 	"github.com/bhune/utsav/services/api/internal/model"
 )
 
 const (
 	accessTokenCookieName  = "utsav_access_token"
 	refreshTokenCookieName = "utsav_refresh_token"
+	// guestTokenCookieName is HttpOnly; public RSVP flows use this instead of localStorage.
+	guestTokenCookieName = "guest_token"
 )
 
+func guestTokenFromRequest(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	if v, err := c.Cookie(guestTokenCookieName); err == nil && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	h := c.GetHeader("Authorization")
+	if strings.HasPrefix(strings.ToLower(h), "bearer ") {
+		return strings.TrimSpace(h[7:])
+	}
+	return ""
+}
+
+func (s *Server) setGuestTokenCookie(c *gin.Context, token string) {
+	secure, sameSite := s.cookieSecureAndSameSite(c)
+	domain := ""
+	if s.Config != nil {
+		domain = strings.TrimSpace(s.Config.AuthCookieDomain)
+	}
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     guestTokenCookieName,
+		Value:    token,
+		Path:     "/",
+		Domain:   domain,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: sameSite,
+		MaxAge:   int((24 * time.Hour).Seconds()),
+	})
+}
+
 func (s *Server) setAuthCookies(c *gin.Context, accessToken, refreshToken string) {
-	secure := s.isSecureCookieRequest(c)
-	sameSite := s.cookieSameSite(c)
+	secure, sameSite := s.cookieSecureAndSameSite(c)
 	domain := ""
 	if s.Config != nil {
 		domain = strings.TrimSpace(s.Config.AuthCookieDomain)
@@ -46,14 +80,23 @@ func (s *Server) setAuthCookies(c *gin.Context, accessToken, refreshToken string
 }
 
 func (s *Server) clearAuthCookies(c *gin.Context) {
-	secure := s.isSecureCookieRequest(c)
-	sameSite := s.cookieSameSite(c)
+	secure, sameSite := s.cookieSecureAndSameSite(c)
 	domain := ""
 	if s.Config != nil {
 		domain = strings.TrimSpace(s.Config.AuthCookieDomain)
 	}
 	http.SetCookie(c.Writer, &http.Cookie{Name: accessTokenCookieName, Value: "", Path: "/", Domain: domain, HttpOnly: true, Secure: secure, SameSite: sameSite, MaxAge: -1})
 	http.SetCookie(c.Writer, &http.Cookie{Name: refreshTokenCookieName, Value: "", Path: "/", Domain: domain, HttpOnly: true, Secure: secure, SameSite: sameSite, MaxAge: -1})
+}
+
+func (s *Server) cookieSecureAndSameSite(c *gin.Context) (secure bool, sameSite http.SameSite) {
+	secure = s.isSecureCookieRequest(c)
+	sameSite = s.cookieSameSite(c)
+	if sameSite == http.SameSiteNoneMode {
+		// Browsers reject SameSite=None without Secure; cross-site (e.g. Vercel → Render) would drop the cookie silently.
+		secure = true
+	}
+	return secure, sameSite
 }
 
 func (s *Server) isSecureCookieRequest(c *gin.Context) bool {
@@ -120,9 +163,11 @@ func (s *Server) postOTPVerify(c *gin.Context) {
 	}
 	result, svcErr := s.AuthService.VerifyOTP(c.Request.Context(), body.Phone, body.Code, c.ClientIP())
 	if svcErr != nil {
+		metrics.OTPVerify("auth", metrics.ResultLabel(svcErr.Code))
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}
+	metrics.OTPVerify("auth", "success")
 	s.setAuthCookies(c, result.AccessToken, result.RefreshToken)
 
 	c.JSON(http.StatusOK, gin.H{

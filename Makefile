@@ -1,4 +1,4 @@
-.PHONY: docker-up docker-down api web
+.PHONY: docker-up docker-down api web dev-api dev-web
 
 docker-up:
 	docker compose -f infra/docker/compose.yml up -d
@@ -17,3 +17,12 @@ api:
 
 web:
 	cd frontend && npm install && npm run dev
+
+# One-file local env flow: keep all vars in repo-root .env.local
+dev-api:
+	test -f .env.local || (echo ".env.local not found at repo root" && exit 1)
+	set -a; . ./.env.local; set +a; cd services/api; go run ./cmd/api
+
+dev-web:
+	test -f .env.local || (echo ".env.local not found at repo root" && exit 1)
+	set -a; . ./.env.local; set +a; cd frontend; npm install && npm run dev

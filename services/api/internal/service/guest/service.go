@@ -44,22 +44,6 @@ func guestListPageCacheKey(eventID uuid.UUID, sortNorm, tier string, limit, offs
 	return "guestlist:" + eventID.String() + ":" + strconv.FormatInt(nsVersion, 10) + ":" + sortNorm + ":" + tierK + ":" + strconv.Itoa(limit) + ":" + strconv.Itoa(offset) + ":" + cTag
 }
 
-type namespaceVersionReader interface {
-	ReadIntKey(ctx context.Context, key string) (int64, error)
-}
-
-func guestListNamespaceVersion(ctx context.Context, c cache.Cache, eventID uuid.UUID) int64 {
-	if c == nil {
-		return 0
-	}
-	if r, ok := c.(namespaceVersionReader); ok {
-		if v, err := r.ReadIntKey(ctx, cache.KeyGuestListNamespaceVersion(eventID)); err == nil && v >= 0 {
-			return v
-		}
-	}
-	return 0
-}
-
 type ServiceError struct {
 	Status  int
 	Code    string
@@ -121,6 +105,9 @@ func normalizeListSort(sort string) string {
 // ListGuests returns guests and an opaque next_cursor when another page exists.
 // Priority sorts use SQL ORDER BY + LIMIT/OFFSET or keyset (cursor); no full-table prefetch.
 func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int, sort, priorityTier string, cursorStr *string) ([]guestrepo.Guest, *string, *ServiceError) {
+	qctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
 	tierFilter := strings.ToLower(strings.TrimSpace(priorityTier))
 	switch tierFilter {
 	case "critical", "important", "optional":
@@ -148,10 +135,10 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 		if decoded != nil {
 			offKey = 0
 		}
-		nsVersion := guestListNamespaceVersion(ctx, s.cache, eventID)
+		nsVersion := cache.GuestListNamespaceVersion(qctx, s.cache, eventID)
 		cacheKey := guestListPageCacheKey(eventID, sortNorm, tierFilter, limit, offKey, nsVersion, cursorStr)
 		if s.cache != nil {
-			if raw, err := s.cache.Get(ctx, cacheKey); err == nil {
+			if raw, err := s.cache.Get(qctx, cacheKey); err == nil {
 				var p guestListPageCached
 				if json.Unmarshal(raw, &p) == nil {
 					return p.Guests, p.Next, nil
@@ -159,7 +146,7 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 			}
 		}
 		fetch := limit + 1
-		list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{
+		list, err := s.repo.ListGuests(qctx, guestrepo.ListGuestsParams{
 			EventID:      eventID,
 			Limit:        fetch,
 			Offset:       offset,
@@ -185,7 +172,7 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 		}
 		if s.cache != nil {
 			if raw, err := json.Marshal(guestListPageCached{Guests: list, Next: next}); err == nil {
-				_ = s.cache.Set(ctx, cacheKey, raw, guestListPageCacheTTL)
+				_ = s.cache.Set(qctx, cacheKey, raw, guestListPageCacheTTL)
 			}
 		}
 		return list, next, nil
@@ -195,10 +182,10 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 		offset = 0
 	}
 
-	nsVersion := guestListNamespaceVersion(ctx, s.cache, eventID)
+	nsVersion := cache.GuestListNamespaceVersion(qctx, s.cache, eventID)
 	cacheKey := guestListPageCacheKey(eventID, sortNorm, "", limit, offset, nsVersion, cursorStr)
 	if s.cache != nil {
-		if raw, err := s.cache.Get(ctx, cacheKey); err == nil {
+		if raw, err := s.cache.Get(qctx, cacheKey); err == nil {
 			var p guestListPageCached
 			if json.Unmarshal(raw, &p) == nil {
 				return p.Guests, p.Next, nil
@@ -207,7 +194,7 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 	}
 
 	fetch := limit + 1
-	list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{
+	list, err := s.repo.ListGuests(qctx, guestrepo.ListGuestsParams{
 		EventID:      eventID,
 		Limit:        fetch,
 		Offset:       offset,
@@ -234,7 +221,7 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 	}
 	if s.cache != nil {
 		if raw, err := json.Marshal(guestListPageCached{Guests: list, Next: next}); err == nil {
-			_ = s.cache.Set(ctx, cacheKey, raw, guestListPageCacheTTL)
+			_ = s.cache.Set(qctx, cacheKey, raw, guestListPageCacheTTL)
 		}
 	}
 	return list, next, nil

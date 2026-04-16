@@ -40,6 +40,7 @@ jobs:
           go mod tidy
           go test ./...
           go build -o /tmp/utsav-api ./cmd/api
+          go build -o /tmp/utsav-worker ./cmd/worker
 
   api-integration:
     runs-on: ubuntu-latest

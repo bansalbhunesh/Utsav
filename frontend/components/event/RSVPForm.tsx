@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { guestApiFetch, setGuestToken } from '@/lib/api'
+import { guestApiFetch } from '@/lib/api'
 import { 
   Check, 
   X, 
@@ -73,11 +73,10 @@ export function RSVPForm({ eventTitle, eventSlug, subEvents = [] }: RSVPFormProp
     setIsSubmitting(true)
     setError(null)
     try {
-      const data = await guestApiFetch<{ guest_access_token: string }>(
+      await guestApiFetch<{ ok: boolean }>(
         `/v1/public/events/${eventSlug}/rsvp/otp/verify`,
         { method: 'POST', json: { phone, code: otp } }
       )
-      setGuestToken(data.guest_access_token)
       setStep('DETAILS')
     } catch {
       setError('Invalid OTP code. Please try again.')
