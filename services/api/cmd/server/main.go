@@ -209,6 +209,9 @@ func main() {
 	if isProd && (strings.TrimSpace(cfg.UpstashRESTURL) == "" || strings.TrimSpace(cfg.UpstashRESTToken) == "") {
 		log.Fatal("Upstash Redis must be configured in production for distributed rate limiting")
 	}
+	if isProd && (strings.TrimSpace(cfg.RazorpayWebhookSecret) == "" || strings.TrimSpace(cfg.RazorpayWebhookSecret) == "rzp_webhook_secret_stub") {
+		log.Fatal("RAZORPAY_WEBHOOK_SECRET must be set in production")
+	}
 	newLimiter := func(max int) ratelimit.Limiter {
 		if strings.TrimSpace(cfg.UpstashRESTURL) != "" && strings.TrimSpace(cfg.UpstashRESTToken) != "" {
 			return ratelimit.NewUpstashRESTLimiter(cfg.UpstashRESTURL, cfg.UpstashRESTToken, max, window)
@@ -216,6 +219,7 @@ func main() {
 		return ratelimit.NewInMemoryLimiter(max, window)
 	}
 	var otpSender otp.Sender
+	var asynqServer *asynq.Server
 	if strings.EqualFold(strings.TrimSpace(cfg.OTPProvider), "msg91") {
 		otpSender = otp.NewResilientSender(otp.NewMSG91Sender(cfg.OTPAPIKey, cfg.OTPSenderID, ""))
 	}
@@ -230,7 +234,7 @@ func main() {
 		}
 		asynqClient := asynq.NewClient(redisOpt)
 		otpDispatcher = otp.NewQueueDispatcher(asynqClient)
-		asynqServer := asynq.NewServer(redisOpt, asynq.Config{
+		asynqServer = asynq.NewServer(redisOpt, asynq.Config{
 			Concurrency: 20,
 			Queues: map[string]int{
 				"critical": 10,
@@ -313,6 +317,9 @@ func main() {
 	<-quit
 	log.Print("shutdown signal received")
 	cleanupCancel()
+	if asynqServer != nil {
+		asynqServer.Shutdown()
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {

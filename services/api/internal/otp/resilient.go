@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,6 +19,7 @@ type ResilientSender struct {
 	mu              sync.Mutex
 	consecutiveFail int
 	openUntil       time.Time
+	probing         int32 // atomic: allows a single half-open probe goroutine
 }
 
 func NewResilientSender(inner Sender) *ResilientSender {
@@ -70,18 +72,28 @@ func (s *ResilientSender) SendOTP(ctx context.Context, phone, code string) error
 }
 
 func (s *ResilientSender) guardCircuit() error {
+	now := time.Now()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.openUntil.IsZero() && time.Now().Before(s.openUntil) {
+	isOpen := !s.openUntil.IsZero() && now.Before(s.openUntil)
+	cooldownExpired := !s.openUntil.IsZero() && !now.Before(s.openUntil)
+	if isOpen {
+		s.mu.Unlock()
 		return fmt.Errorf("otp provider circuit breaker open")
 	}
-	if !s.openUntil.IsZero() && time.Now().After(s.openUntil) {
+	if cooldownExpired {
+		// Only one goroutine is allowed to probe after cooldown expires.
+		if !atomic.CompareAndSwapInt32(&s.probing, 0, 1) {
+			s.mu.Unlock()
+			return fmt.Errorf("otp provider circuit breaker probing")
+		}
 		s.openUntil = time.Time{}
 	}
+	s.mu.Unlock()
 	return nil
 }
 
 func (s *ResilientSender) markSuccess() {
+	atomic.StoreInt32(&s.probing, 0)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.consecutiveFail = 0
@@ -89,6 +101,7 @@ func (s *ResilientSender) markSuccess() {
 }
 
 func (s *ResilientSender) markFailure() {
+	atomic.StoreInt32(&s.probing, 0)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.consecutiveFail++

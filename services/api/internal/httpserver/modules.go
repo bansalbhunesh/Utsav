@@ -3,9 +3,9 @@ package httpserver
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -566,29 +566,11 @@ func verifyRazorpayWebhookSignature(secret string, payload []byte, sig string) b
 	m := hmac.New(sha256.New, []byte(secret))
 	m.Write(payload)
 	got := m.Sum(nil)
-	want, err := hexString(sig)
-	if err != nil {
-		return false
-	}
+	want, err := hex.DecodeString(strings.TrimSpace(sig))
+	if err != nil || len(want) == 0 {
+ 		return false
+ 	}
 	return hmac.Equal(got, want)
-}
-
-func hexString(s string) ([]byte, error) {
-	const hex = "0123456789abcdef"
-	s = strings.ToLower(strings.TrimSpace(s))
-	if len(s)%2 != 0 {
-		return nil, fmt.Errorf("invalid hex length")
-	}
-	out := make([]byte, 0, len(s)/2)
-	for i := 0; i < len(s); i += 2 {
-		hi := strings.IndexByte(hex, s[i])
-		lo := strings.IndexByte(hex, s[i+1])
-		if hi < 0 || lo < 0 {
-			return nil, fmt.Errorf("invalid hex")
-		}
-		out = append(out, byte((hi<<4)|lo))
-	}
-	return out, nil
 }
 
 func (s *Server) postRazorpayWebhook(c *gin.Context) {
