@@ -1,7 +1,10 @@
 package httpserver
 
 import (
+	"bytes"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -21,16 +24,29 @@ func (s *Server) postGuestsImport(c *gin.Context) {
 		writeAPIError(c, http.StatusForbidden, "FORBIDDEN", "You do not have permission to import guests.")
 		return
 	}
-	var body importGuestsBody
-	if err := c.ShouldBindJSON(&body); err != nil {
-		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "CSV payload is required.")
-		return
-	}
 	if s.GuestService == nil {
 		writeAPIError(c, http.StatusInternalServerError, "GUEST_SERVICE_UNAVAILABLE", "Guest service unavailable.")
 		return
 	}
-	result, svcErr := s.GuestService.ImportGuestsCSV(c.Request.Context(), eventID, body.CSV)
+	contentType := strings.ToLower(strings.TrimSpace(c.GetHeader("Content-Type")))
+	var src io.Reader
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		file, _, err := c.Request.FormFile("file")
+		if err != nil {
+			writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "CSV file is required.")
+			return
+		}
+		defer file.Close()
+		src = file
+	} else {
+		var body importGuestsBody
+		if err := c.ShouldBindJSON(&body); err != nil {
+			writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "CSV payload is required.")
+			return
+		}
+		src = bytes.NewBufferString(body.CSV)
+	}
+	result, svcErr := s.GuestService.ImportGuestsCSV(c.Request.Context(), eventID, src)
 	if svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return

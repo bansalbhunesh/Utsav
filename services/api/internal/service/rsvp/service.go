@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -12,6 +11,7 @@ import (
 
 	"github.com/bhune/utsav/services/api/internal/auth"
 	"github.com/bhune/utsav/services/api/internal/otp"
+	phoneutil "github.com/bhune/utsav/services/api/internal/phone"
 	"github.com/bhune/utsav/services/api/internal/ratelimit"
 	"github.com/bhune/utsav/services/api/internal/repository/rsvprepo"
 )
@@ -46,8 +46,6 @@ type Service struct {
 	otpDispatcher     otp.Dispatcher
 	otpMaxAttempts    int
 }
-
-var phoneE164Regex = regexp.MustCompile(`^\+?[1-9]\d{7,14}$`)
 
 func NewService(
 	repo rsvprepo.Repository,
@@ -88,15 +86,12 @@ func (s *Service) EventIDFromSlug(ctx context.Context, slug string) (uuid.UUID, 
 }
 
 func (s *Service) RequestOTP(ctx context.Context, eventID uuid.UUID, slug, phone, clientIP string) *ServiceError {
-	phone = strings.TrimSpace(phone)
-	if phone == "" {
-		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone is required."}
-	}
-	if !phoneE164Regex.MatchString(phone) {
-		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_PHONE", Message: "Phone number must be in E.164 format."}
+	phoneNorm, err := phoneutil.NormalizeE164(phone)
+	if err != nil {
+		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_PHONE", Message: "Phone number is invalid."}
 	}
 	if s.otpRequestLimiter != nil {
-		allowed, err := s.otpRequestLimiter.Allow(ctx, "rsvp_otp_req:"+clientIP+"|"+strings.TrimSpace(strings.ToLower(slug))+"|"+phone)
+		allowed, err := s.otpRequestLimiter.Allow(ctx, "rsvp_otp_req:"+clientIP+"|"+strings.TrimSpace(strings.ToLower(slug))+"|"+phoneNorm)
 		if err != nil {
 			return &ServiceError{Status: http.StatusInternalServerError, Code: "RATE_LIMIT_FAILED", Message: "Unable to validate RSVP OTP rate limits."}
 		}
@@ -119,15 +114,15 @@ func (s *Service) RequestOTP(ctx context.Context, eventID uuid.UUID, slug, phone
 	if err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_HASH_FAILED", Message: "Unable to process RSVP OTP request."}
 	}
-	if err := s.repo.DeleteRSVPOTPChallenges(ctx, eventID, phone); err != nil {
+	if err := s.repo.DeleteRSVPOTPChallenges(ctx, eventID, phoneNorm); err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_PERSIST_FAILED", Message: "Unable to save RSVP OTP challenge."}
 	}
-	if err := s.repo.InsertRSVPOTPChallenge(ctx, eventID, phone, hash); err != nil {
+	if err := s.repo.InsertRSVPOTPChallenge(ctx, eventID, phoneNorm, hash); err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_PERSIST_FAILED", Message: "Unable to save RSVP OTP challenge."}
 	}
 	if s.otpDispatcher != nil {
-		if err := s.otpDispatcher.DispatchOTP(ctx, phone, code); err != nil {
-			_ = s.repo.DeleteRSVPOTPChallenges(ctx, eventID, phone)
+		if err := s.otpDispatcher.DispatchOTP(ctx, phoneNorm, code); err != nil {
+			_ = s.repo.DeleteRSVPOTPChallenges(ctx, eventID, phoneNorm)
 			return &ServiceError{Status: http.StatusBadGateway, Code: "OTP_SEND_FAILED", Message: "Unable to send RSVP OTP."}
 		}
 	}
@@ -135,12 +130,12 @@ func (s *Service) RequestOTP(ctx context.Context, eventID uuid.UUID, slug, phone
 }
 
 func (s *Service) VerifyOTP(ctx context.Context, eventID uuid.UUID, phone, code, clientIP string) (string, *ServiceError) {
-	phone = strings.TrimSpace(phone)
-	if phone == "" || code == "" {
+	phoneNorm, err := phoneutil.NormalizeE164(phone)
+	if err != nil || strings.TrimSpace(code) == "" {
 		return "", &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone and code are required."}
 	}
 	if s.otpVerifyLimiter != nil {
-		allowed, err := s.otpVerifyLimiter.Allow(ctx, "rsvp_otp_verify:"+eventID.String()+"|"+clientIP+"|"+phone)
+		allowed, err := s.otpVerifyLimiter.Allow(ctx, "rsvp_otp_verify:"+eventID.String()+"|"+clientIP+"|"+phoneNorm)
 		if err != nil {
 			return "", &ServiceError{Status: http.StatusInternalServerError, Code: "RATE_LIMIT_FAILED", Message: "Unable to validate RSVP OTP rate limits."}
 		}
@@ -148,7 +143,7 @@ func (s *Service) VerifyOTP(ctx context.Context, eventID uuid.UUID, phone, code,
 			return "", &ServiceError{Status: http.StatusTooManyRequests, Code: "RATE_LIMITED", Message: "Too many RSVP OTP verify attempts. Please retry later."}
 		}
 	}
-	ch, err := s.repo.GetLatestRSVPOTPChallenge(ctx, eventID, phone)
+	ch, err := s.repo.GetLatestRSVPOTPChallenge(ctx, eventID, phoneNorm)
 	if err != nil {
 		if rsvprepo.IsNoRows(err) {
 			return "", &ServiceError{Status: http.StatusUnauthorized, Code: "NO_CHALLENGE", Message: "No active RSVP OTP challenge found."}
@@ -175,7 +170,7 @@ func (s *Service) VerifyOTP(ctx context.Context, eventID uuid.UUID, phone, code,
 		return "", &ServiceError{Status: http.StatusUnauthorized, Code: "NO_CHALLENGE", Message: "No active RSVP OTP challenge found."}
 	}
 
-	tok, err := auth.SignGuestToken(eventID, phone, s.jwtSecret, 24*time.Hour)
+	tok, err := auth.SignGuestToken(eventID, phoneNorm, s.jwtSecret, 24*time.Hour)
 	if err != nil {
 		return "", &ServiceError{Status: http.StatusInternalServerError, Code: "TOKEN_SIGN_FAILED", Message: "Unable to create guest access token."}
 	}

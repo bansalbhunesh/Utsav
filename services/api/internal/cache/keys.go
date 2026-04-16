@@ -11,3 +11,8 @@ func KeyRelationshipScoreOverview(eventID uuid.UUID) string {
 func PrefixGuestListForEvent(eventID uuid.UUID) string {
 	return "guestlist:" + eventID.String() + ":"
 }
+
+// KeyGuestListNamespaceVersion is a monotonic namespace version for guest list cache keys.
+func KeyGuestListNamespaceVersion(eventID uuid.UUID) string {
+	return "guestlist_nsver:" + eventID.String()
+}

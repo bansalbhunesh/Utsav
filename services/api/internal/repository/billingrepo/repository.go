@@ -33,6 +33,7 @@ type Repository interface {
 	ListCheckouts(ctx context.Context, userID uuid.UUID) ([]Checkout, error)
 	MarkOrderPaidAndFetch(ctx context.Context, orderID string) (string, any, error)
 	MarkOrderPaidFromWebhook(ctx context.Context, provider, eventKey, payloadHash, orderID string) error
+	RetryPendingWebhookDeliveries(ctx context.Context, provider string, limit int) (int, error)
 }
 
 var (
@@ -219,31 +220,150 @@ func (r *PGRepository) MarkOrderPaidFromWebhook(ctx context.Context, provider, e
 	}
 	defer tx.Rollback(ctx)
 
-	tag, err := tx.Exec(ctx, `
-		INSERT INTO webhook_deliveries (provider, event_key, payload_hash)
-		VALUES ($1,$2,$3)
-		ON CONFLICT (provider, event_key) DO NOTHING
-	`, provider, eventKey, payloadHash)
-	if err != nil {
+	var existingHash string
+	var status string
+	var attempts int
+	err = tx.QueryRow(ctx, `
+		SELECT payload_hash, status, attempt_count
+		FROM webhook_deliveries
+		WHERE provider=$1 AND event_key=$2
+		FOR UPDATE
+	`, provider, eventKey).Scan(&existingHash, &status, &attempts)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		var existing string
-		err = tx.QueryRow(ctx, `
-			SELECT payload_hash FROM webhook_deliveries
-			WHERE provider=$1 AND event_key=$2
-			FOR UPDATE
-		`, provider, eventKey).Scan(&existing)
-		if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO webhook_deliveries (
+				provider, event_key, payload_hash, order_id, status, attempt_count, next_retry_at
+			)
+			VALUES ($1,$2,$3,$4,'received',0,now())
+		`, provider, eventKey, payloadHash, orderID); err != nil {
 			return err
 		}
-		if existing != payloadHash {
+	} else {
+		if existingHash != payloadHash {
 			return ErrWebhookDedupePayloadMismatch
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE webhook_deliveries
+			SET order_id = CASE WHEN order_id = '' THEN $3 ELSE order_id END
+			WHERE provider=$1 AND event_key=$2
+		`, provider, eventKey, orderID); err != nil {
+			return err
+		}
+		if status == "processed" {
+			return tx.Commit(ctx)
 		}
 	}
 
 	if _, _, err := markOrderPaidInTx(ctx, tx, orderID); err != nil {
+		_, _ = tx.Exec(ctx, `
+			UPDATE webhook_deliveries
+			SET status='failed',
+				attempt_count = attempt_count + 1,
+				last_error = LEFT($3, 1024),
+				next_retry_at = now() + interval '2 minutes'
+			WHERE provider=$1 AND event_key=$2
+		`, provider, eventKey, err.Error())
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE webhook_deliveries
+		SET status='processed',
+			attempt_count = attempt_count + 1,
+			last_error = '',
+			next_retry_at = now(),
+			processed_at = now()
+		WHERE provider=$1 AND event_key=$2
+	`, provider, eventKey); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func (r *PGRepository) RetryPendingWebhookDeliveries(ctx context.Context, provider string, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	type row struct {
+		eventKey string
+		orderID  string
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT event_key, order_id
+		FROM webhook_deliveries
+		WHERE provider = $1
+		  AND status IN ('received', 'failed')
+		  AND order_id <> ''
+		  AND next_retry_at <= now()
+		ORDER BY next_retry_at ASC
+		LIMIT $2
+	`, strings.TrimSpace(strings.ToLower(provider)), limit)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	pending := make([]row, 0, limit)
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.eventKey, &r.orderID); err != nil {
+			return 0, err
+		}
+		pending = append(pending, r)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	processed := 0
+	for _, p := range pending {
+		tx, err := r.pool.Begin(ctx)
+		if err != nil {
+			return processed, err
+		}
+		var status string
+		err = tx.QueryRow(ctx, `
+			SELECT status
+			FROM webhook_deliveries
+			WHERE provider=$1 AND event_key=$2
+			FOR UPDATE
+		`, strings.TrimSpace(strings.ToLower(provider)), p.eventKey).Scan(&status)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			continue
+		}
+		if status == "processed" {
+			_ = tx.Commit(ctx)
+			continue
+		}
+		if _, _, err := markOrderPaidInTx(ctx, tx, p.orderID); err != nil {
+			_, _ = tx.Exec(ctx, `
+				UPDATE webhook_deliveries
+				SET status='failed',
+					attempt_count = attempt_count + 1,
+					last_error = LEFT($3, 1024),
+					next_retry_at = now() + interval '5 minutes'
+				WHERE provider=$1 AND event_key=$2
+			`, strings.TrimSpace(strings.ToLower(provider)), p.eventKey, err.Error())
+			_ = tx.Commit(ctx)
+			continue
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE webhook_deliveries
+			SET status='processed',
+				attempt_count = attempt_count + 1,
+				last_error = '',
+				next_retry_at = now(),
+				processed_at = now()
+			WHERE provider=$1 AND event_key=$2
+		`, strings.TrimSpace(strings.ToLower(provider)), p.eventKey); err != nil {
+			_ = tx.Rollback(ctx)
+			continue
+		}
+		if err := tx.Commit(ctx); err != nil {
+			continue
+		}
+		processed++
+	}
+	return processed, nil
 }

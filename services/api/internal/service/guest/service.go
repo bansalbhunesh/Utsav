@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/bhune/utsav/services/api/internal/cache"
+	phoneutil "github.com/bhune/utsav/services/api/internal/phone"
 	"github.com/bhune/utsav/services/api/internal/repository/guestrepo"
 )
 
@@ -29,7 +31,7 @@ type guestListPageCached struct {
 	Next   *string           `json:"next,omitempty"`
 }
 
-func guestListPageCacheKey(eventID uuid.UUID, sortNorm, tier string, limit, offset int, cursorStr *string) string {
+func guestListPageCacheKey(eventID uuid.UUID, sortNorm, tier string, limit, offset int, nsVersion int64, cursorStr *string) string {
 	cTag := "-"
 	if cursorStr != nil && strings.TrimSpace(*cursorStr) != "" {
 		sum := sha256.Sum256([]byte(strings.TrimSpace(*cursorStr)))
@@ -39,7 +41,23 @@ func guestListPageCacheKey(eventID uuid.UUID, sortNorm, tier string, limit, offs
 	if tierK == "" {
 		tierK = "-"
 	}
-	return "guestlist:" + eventID.String() + ":" + sortNorm + ":" + tierK + ":" + strconv.Itoa(limit) + ":" + strconv.Itoa(offset) + ":" + cTag
+	return "guestlist:" + eventID.String() + ":" + strconv.FormatInt(nsVersion, 10) + ":" + sortNorm + ":" + tierK + ":" + strconv.Itoa(limit) + ":" + strconv.Itoa(offset) + ":" + cTag
+}
+
+type namespaceVersionReader interface {
+	ReadIntKey(ctx context.Context, key string) (int64, error)
+}
+
+func guestListNamespaceVersion(ctx context.Context, c cache.Cache, eventID uuid.UUID) int64 {
+	if c == nil {
+		return 0
+	}
+	if r, ok := c.(namespaceVersionReader); ok {
+		if v, err := r.ReadIntKey(ctx, cache.KeyGuestListNamespaceVersion(eventID)); err == nil && v >= 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 type ServiceError struct {
@@ -55,7 +73,7 @@ type repository interface {
 	UpsertGuest(ctx context.Context, eventID uuid.UUID, input guestrepo.GuestInput) (string, error)
 	UpsertGuestTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, input guestrepo.GuestInput) (string, error)
 	GuestIDByEventPhoneTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, phone string) (string, error)
-	ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, rawCSV string) (*guestrepo.ImportResult, error)
+	ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, src io.Reader) (*guestrepo.ImportResult, error)
 }
 
 type Service struct {
@@ -130,7 +148,8 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 		if decoded != nil {
 			offKey = 0
 		}
-		cacheKey := guestListPageCacheKey(eventID, sortNorm, tierFilter, limit, offKey, cursorStr)
+		nsVersion := guestListNamespaceVersion(ctx, s.cache, eventID)
+		cacheKey := guestListPageCacheKey(eventID, sortNorm, tierFilter, limit, offKey, nsVersion, cursorStr)
 		if s.cache != nil {
 			if raw, err := s.cache.Get(ctx, cacheKey); err == nil {
 				var p guestListPageCached
@@ -176,7 +195,8 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 		offset = 0
 	}
 
-	cacheKey := guestListPageCacheKey(eventID, sortNorm, "", limit, offset, cursorStr)
+	nsVersion := guestListNamespaceVersion(ctx, s.cache, eventID)
+	cacheKey := guestListPageCacheKey(eventID, sortNorm, "", limit, offset, nsVersion, cursorStr)
 	if s.cache != nil {
 		if raw, err := s.cache.Get(ctx, cacheKey); err == nil {
 			var p guestListPageCached
@@ -296,10 +316,11 @@ func (s *Service) InvalidateRelationshipOverview(ctx context.Context, eventID uu
 
 func normalizeGuestInput(input guestrepo.GuestInput) (guestrepo.GuestInput, *ServiceError) {
 	input.Name = strings.TrimSpace(input.Name)
-	input.Phone = strings.TrimSpace(input.Phone)
-	if input.Name == "" || input.Phone == "" {
+	phoneNorm, err := phoneutil.NormalizeE164(input.Phone)
+	if input.Name == "" || err != nil {
 		return input, &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Name and phone are required."}
 	}
+	input.Phone = phoneNorm
 	return input, nil
 }
 
@@ -331,11 +352,11 @@ func (s *Service) UpsertGuestTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUI
 
 // GuestIDByEventPhoneTx returns the guest id for an event/phone pair within tx (idempotent replay path).
 func (s *Service) GuestIDByEventPhoneTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, phone string) (string, *ServiceError) {
-	phone = strings.TrimSpace(phone)
-	if phone == "" {
+	phoneNorm, err := phoneutil.NormalizeE164(phone)
+	if err != nil {
 		return "", &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone is required."}
 	}
-	guestID, err := s.repo.GuestIDByEventPhoneTx(ctx, tx, eventID, phone)
+	guestID, err := s.repo.GuestIDByEventPhoneTx(ctx, tx, eventID, phoneNorm)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", &ServiceError{Status: http.StatusBadRequest, Code: "UPSERT_REPLAY_INCOMPLETE", Message: "Unable to resolve guest for idempotent replay."}
@@ -345,11 +366,11 @@ func (s *Service) GuestIDByEventPhoneTx(ctx context.Context, tx pgx.Tx, eventID 
 	return guestID, nil
 }
 
-func (s *Service) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, csv string) (*guestrepo.ImportResult, *ServiceError) {
-	if strings.TrimSpace(csv) == "" {
+func (s *Service) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, src io.Reader) (*guestrepo.ImportResult, *ServiceError) {
+	if src == nil {
 		return nil, &ServiceError{Status: http.StatusBadRequest, Code: "EMPTY_CSV", Message: "CSV payload cannot be empty."}
 	}
-	result, err := s.repo.ImportGuestsCSV(ctx, eventID, csv)
+	result, err := s.repo.ImportGuestsCSV(ctx, eventID, src)
 	if err != nil {
 		return nil, &ServiceError{Status: http.StatusBadRequest, Code: "CSV_IMPORT_FAILED", Message: "Unable to import guest CSV."}
 	}

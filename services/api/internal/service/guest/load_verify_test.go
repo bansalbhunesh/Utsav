@@ -2,6 +2,7 @@ package guestservice
 
 import (
 	"context"
+	"io"
 	"sync"
 	"testing"
 
@@ -38,7 +39,7 @@ func (r *recordingRepo) GuestIDByEventPhoneTx(context.Context, pgx.Tx, uuid.UUID
 	return "", nil
 }
 
-func (r *recordingRepo) ImportGuestsCSV(context.Context, uuid.UUID, string) (*guestrepo.ImportResult, error) {
+func (r *recordingRepo) ImportGuestsCSV(context.Context, uuid.UUID, io.Reader) (*guestrepo.ImportResult, error) {
 	return &guestrepo.ImportResult{}, nil
 }
 

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
+	phoneutil "github.com/bhune/utsav/services/api/internal/phone"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -65,7 +67,7 @@ type Repository interface {
 	UpsertGuest(ctx context.Context, eventID uuid.UUID, input GuestInput) (string, error)
 	UpsertGuestTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, input GuestInput) (string, error)
 	GuestIDByEventPhoneTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, phone string) (string, error)
-	ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, rawCSV string) (*ImportResult, error)
+	ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, src io.Reader) (*ImportResult, error)
 }
 
 type PGRepository struct {
@@ -360,45 +362,10 @@ func (r *PGRepository) GuestIDByEventPhoneTx(ctx context.Context, tx pgx.Tx, eve
 	return guestID, nil
 }
 
-func (r *PGRepository) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, rawCSV string) (*ImportResult, error) {
-	raw := strings.TrimSpace(rawCSV)
-	if strings.HasPrefix(raw, "\ufeff") {
-		raw = strings.TrimPrefix(raw, "\ufeff")
-	}
-	reader := csv.NewReader(strings.NewReader(raw))
+func (r *PGRepository) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, src io.Reader) (*ImportResult, error) {
+	reader := csv.NewReader(src)
 	reader.LazyQuotes = true
 	reader.TrimLeadingSpace = true
-	records, err := reader.ReadAll()
-	if err != nil {
-		return nil, err
-	}
-	if len(records) == 0 {
-		return &ImportResult{Imported: 0, Errors: []ImportError{{Line: 1, Error: "empty_csv"}}}, nil
-	}
-
-	start := 0
-	nameIdx, phoneIdx, emailIdx, relIdx, sideIdx := 0, 1, -1, -1, -1
-	first := records[0]
-	joined := strings.ToLower(strings.Join(first, "|"))
-	if strings.Contains(joined, "phone") && strings.Contains(joined, "name") {
-		start = 1
-		nameIdx, phoneIdx, emailIdx, relIdx, sideIdx = -1, -1, -1, -1, -1
-		for i, h := range first {
-			hl := strings.ToLower(strings.TrimSpace(h))
-			switch hl {
-			case "name", "guest", "guest_name":
-				nameIdx = i
-			case "phone", "mobile", "contact":
-				phoneIdx = i
-			case "email", "e-mail":
-				emailIdx = i
-			case "relationship", "relation":
-				relIdx = i
-			case "side", "bride_groom", "family_side":
-				sideIdx = i
-			}
-		}
-	}
 
 	result := &ImportResult{Imported: 0, Errors: []ImportError{}}
 
@@ -411,12 +378,45 @@ func (r *PGRepository) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, r
 		side  string
 	}
 
-	valid := make([]csvRow, 0)
-
-	for i := start; i < len(records); i++ {
-		row := records[i]
-		lineNo := i + 1
-
+	valid := make([]csvRow, 0, 256)
+	lineNo := 0
+	nameIdx, phoneIdx, emailIdx, relIdx, sideIdx := 0, 1, -1, -1, -1
+	headerChecked := false
+	for {
+		row, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		lineNo++
+		if lineNo == 1 && len(row) > 0 && strings.HasPrefix(row[0], "\ufeff") {
+			row[0] = strings.TrimPrefix(row[0], "\ufeff")
+		}
+		if !headerChecked {
+			headerChecked = true
+			joined := strings.ToLower(strings.Join(row, "|"))
+			if strings.Contains(joined, "phone") && strings.Contains(joined, "name") {
+				nameIdx, phoneIdx, emailIdx, relIdx, sideIdx = -1, -1, -1, -1, -1
+				for i, h := range row {
+					hl := strings.ToLower(strings.TrimSpace(h))
+					switch hl {
+					case "name", "guest", "guest_name":
+						nameIdx = i
+					case "phone", "mobile", "contact":
+						phoneIdx = i
+					case "email", "e-mail":
+						emailIdx = i
+					case "relationship", "relation":
+						relIdx = i
+					case "side", "bride_groom", "family_side":
+						sideIdx = i
+					}
+				}
+				continue
+			}
+		}
 		maxIdx := phoneIdx
 		if nameIdx > maxIdx {
 			maxIdx = nameIdx
@@ -436,9 +436,14 @@ func (r *PGRepository) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, r
 		}
 
 		name := strings.TrimSpace(row[nameIdx])
-		phone := strings.TrimSpace(row[phoneIdx])
-		if phone == "" {
+		phoneRaw := strings.TrimSpace(row[phoneIdx])
+		phone, phoneErr := phoneutil.NormalizeE164(phoneRaw)
+		if phoneRaw == "" {
 			result.Errors = append(result.Errors, ImportError{Line: lineNo, Error: "missing_phone"})
+			continue
+		}
+		if phoneErr != nil {
+			result.Errors = append(result.Errors, ImportError{Line: lineNo, Error: "invalid_phone"})
 			continue
 		}
 		if name == "" {
@@ -460,7 +465,9 @@ func (r *PGRepository) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, r
 
 		valid = append(valid, csvRow{line: lineNo, name: name, phone: phone, email: email, rel: rel, side: side})
 	}
-
+	if lineNo == 0 {
+		return &ImportResult{Imported: 0, Errors: []ImportError{{Line: 1, Error: "empty_csv"}}}, nil
+	}
 	result.Imported = len(valid)
 	if len(valid) == 0 {
 		return result, nil

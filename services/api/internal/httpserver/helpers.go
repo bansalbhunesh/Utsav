@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bhune/utsav/services/api/internal/auth"
+	"github.com/bhune/utsav/services/api/internal/cache"
 	"github.com/bhune/utsav/services/api/internal/config"
 	"github.com/bhune/utsav/services/api/internal/media"
 	authservice "github.com/bhune/utsav/services/api/internal/service/auth"
@@ -74,6 +75,7 @@ func writeAPIError(c *gin.Context, status int, code string, message string) {
 type Server struct {
 	Pool         *pgxpool.Pool
 	ReadPool     *pgxpool.Pool // replica pool for read paths; equals Pool when DATABASE_READ_URL unset
+	Cache        cache.Cache
 	Config       *config.Config
 	MediaSigner  media.Signer
 	AuthService  *authservice.Service
@@ -163,9 +165,25 @@ func (s *Server) requireUser(c *gin.Context) (uuid.UUID, bool) {
 }
 
 func (s *Server) eventRole(ctx context.Context, userID, eventID uuid.UUID) (string, bool) {
+	cacheKey := "event_role:" + eventID.String() + ":" + userID.String()
+	if s.Cache != nil {
+		if raw, err := s.Cache.Get(ctx, cacheKey); err == nil {
+			role := strings.TrimSpace(string(raw))
+			if role == "!" {
+				return "", false
+			}
+			if role != "" {
+				return role, true
+			}
+		}
+	}
+	pool := s.ReadPool
+	if pool == nil {
+		pool = s.Pool
+	}
 	var owner uuid.UUID
 	var memberRole sql.NullString
-	err := s.Pool.QueryRow(ctx, `
+	err := pool.QueryRow(ctx, `
 		SELECT e.owner_user_id, m.role
 		FROM events e
 		LEFT JOIN event_members m ON m.event_id = e.id AND m.user_id = $2 AND m.status = 'active'
@@ -174,10 +192,19 @@ func (s *Server) eventRole(ctx context.Context, userID, eventID uuid.UUID) (stri
 		return "", false
 	}
 	if owner == userID {
+		if s.Cache != nil {
+			_ = s.Cache.Set(ctx, cacheKey, []byte("owner"), 60*time.Second)
+		}
 		return "owner", true
 	}
 	if !memberRole.Valid {
+		if s.Cache != nil {
+			_ = s.Cache.Set(ctx, cacheKey, []byte("!"), 30*time.Second)
+		}
 		return "", false
+	}
+	if s.Cache != nil {
+		_ = s.Cache.Set(ctx, cacheKey, []byte(memberRole.String), 60*time.Second)
 	}
 	return memberRole.String, true
 }

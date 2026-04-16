@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 
 	authtoken "github.com/bhune/utsav/services/api/internal/auth"
 	"github.com/bhune/utsav/services/api/internal/otp"
+	phoneutil "github.com/bhune/utsav/services/api/internal/phone"
 	"github.com/bhune/utsav/services/api/internal/ratelimit"
 	"github.com/bhune/utsav/services/api/internal/repository/authrepo"
 )
@@ -75,8 +75,6 @@ type Service struct {
 	otpMaxAttempts    int
 }
 
-var phoneE164Regex = regexp.MustCompile(`^\+?[1-9]\d{7,14}$`)
-
 func NewService(
 	repo repository,
 	otpRequestLimiter ratelimit.Limiter,
@@ -102,15 +100,12 @@ func NewService(
 }
 
 func (s *Service) RequestOTP(ctx context.Context, phone, clientIP string) *ServiceError {
-	phone = strings.TrimSpace(phone)
-	if phone == "" {
-		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone is required."}
-	}
-	if !phoneE164Regex.MatchString(phone) {
-		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_PHONE", Message: "Phone number must be in E.164 format."}
+	phoneNorm, err := phoneutil.NormalizeE164(phone)
+	if err != nil {
+		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_PHONE", Message: "Phone number is invalid."}
 	}
 	if s.otpRequestLimiter != nil {
-		allowed, err := s.otpRequestLimiter.Allow(ctx, "auth_otp_req:"+clientIP+"|"+phone)
+		allowed, err := s.otpRequestLimiter.Allow(ctx, "auth_otp_req:"+clientIP+"|"+phoneNorm)
 		if err != nil {
 			return &ServiceError{Status: http.StatusInternalServerError, Code: "RATE_LIMIT_FAILED", Message: "Unable to validate OTP rate limits."}
 		}
@@ -138,15 +133,15 @@ func (s *Service) RequestOTP(ctx context.Context, phone, clientIP string) *Servi
 	if err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_HASH_FAILED", Message: "Unable to process OTP request."}
 	}
-	if err := s.repo.DeletePhoneOTPChallenges(ctx, phone); err != nil {
+	if err := s.repo.DeletePhoneOTPChallenges(ctx, phoneNorm); err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_PERSIST_FAILED", Message: "Unable to save OTP challenge."}
 	}
-	if err := s.repo.InsertPhoneOTPChallenge(ctx, phone, hash); err != nil {
+	if err := s.repo.InsertPhoneOTPChallenge(ctx, phoneNorm, hash); err != nil {
 		return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_PERSIST_FAILED", Message: "Unable to save OTP challenge."}
 	}
 	if s.otpDispatcher != nil {
-		if err := s.otpDispatcher.DispatchOTP(ctx, phone, code); err != nil {
-			_ = s.repo.DeletePhoneOTPChallenges(ctx, phone)
+		if err := s.otpDispatcher.DispatchOTP(ctx, phoneNorm, code); err != nil {
+			_ = s.repo.DeletePhoneOTPChallenges(ctx, phoneNorm)
 			return &ServiceError{Status: http.StatusBadGateway, Code: "OTP_SEND_FAILED", Message: "Unable to send OTP code."}
 		}
 	}
@@ -154,12 +149,12 @@ func (s *Service) RequestOTP(ctx context.Context, phone, clientIP string) *Servi
 }
 
 func (s *Service) VerifyOTP(ctx context.Context, phone, code, clientIP string) (*OTPVerifyResult, *ServiceError) {
-	phone = strings.TrimSpace(phone)
-	if phone == "" || code == "" {
+	phoneNorm, err := phoneutil.NormalizeE164(phone)
+	if err != nil || strings.TrimSpace(code) == "" {
 		return nil, &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone and code are required."}
 	}
 	if s.otpVerifyLimiter != nil {
-		allowed, err := s.otpVerifyLimiter.Allow(ctx, "auth_otp_verify:"+clientIP+"|"+phone)
+		allowed, err := s.otpVerifyLimiter.Allow(ctx, "auth_otp_verify:"+clientIP+"|"+phoneNorm)
 		if err != nil {
 			return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "RATE_LIMIT_FAILED", Message: "Unable to validate OTP rate limits."}
 		}
@@ -167,7 +162,7 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code, clientIP string) (
 			return nil, &ServiceError{Status: http.StatusTooManyRequests, Code: "RATE_LIMITED", Message: "Too many OTP verify attempts. Please retry later."}
 		}
 	}
-	ch, err := s.repo.GetLatestPhoneOTPChallenge(ctx, phone)
+	ch, err := s.repo.GetLatestPhoneOTPChallenge(ctx, phoneNorm)
 	if err != nil {
 		if authrepo.IsNoRows(err) {
 			return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "NO_CHALLENGE", Message: "No active OTP challenge found."}
@@ -194,10 +189,10 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code, clientIP string) (
 		return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "NO_CHALLENGE", Message: "No active OTP challenge found."}
 	}
 
-	userID, err := s.repo.FindUserIDByPhone(ctx, phone)
+	userID, err := s.repo.FindUserIDByPhone(ctx, phoneNorm)
 	if err != nil {
 		if authrepo.IsNoRows(err) {
-			userID, err = s.repo.CreateUserWithPhone(ctx, phone)
+			userID, err = s.repo.CreateUserWithPhone(ctx, phoneNorm)
 		}
 		if err != nil {
 			return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "USER_UPSERT_FAILED", Message: "Unable to load user profile."}

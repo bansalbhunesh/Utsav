@@ -119,3 +119,12 @@ func (s *Service) MarkOrderPaidFromWebhook(ctx context.Context, provider, eventK
 	}
 	return nil
 }
+
+// RetryPendingWebhookDeliveries replays failed/queued webhook rows.
+func (s *Service) RetryPendingWebhookDeliveries(ctx context.Context, provider string, limit int) (int, *ServiceError) {
+	processed, err := s.repo.RetryPendingWebhookDeliveries(ctx, provider, limit)
+	if err != nil {
+		return 0, &ServiceError{Status: http.StatusInternalServerError, Code: "BILLING_PERSIST_FAILED", Message: "Unable to process pending webhooks."}
+	}
+	return processed, nil
+}

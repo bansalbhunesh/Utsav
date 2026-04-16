@@ -54,31 +54,68 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func startIdempotencyKeyCleanup(pool *pgxpool.Pool) {
+func startIdempotencyKeyCleanup(ctx context.Context, pool *pgxpool.Pool) {
 	go func() {
 		t := time.NewTicker(1 * time.Hour)
 		defer t.Stop()
-		for range t.C {
-			cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			_, err := pool.Exec(cctx, `DELETE FROM idempotency_keys WHERE expires_at < now()`)
-			cancel()
-			if err != nil {
-				log.Printf("WARN: idempotency_keys cleanup: %v", err)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				_, err := pool.Exec(cctx, `DELETE FROM idempotency_keys WHERE expires_at < now()`)
+				cancel()
+				if err != nil {
+					log.Printf("WARN: idempotency_keys cleanup: %v", err)
+				}
 			}
 		}
 	}()
 }
 
-func startWebhookDeliveriesCleanup(pool *pgxpool.Pool) {
+func startWebhookDeliveriesCleanup(ctx context.Context, pool *pgxpool.Pool) {
 	go func() {
 		t := time.NewTicker(24 * time.Hour)
 		defer t.Stop()
-		for range t.C {
-			cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			_, err := pool.Exec(cctx, `DELETE FROM webhook_deliveries WHERE created_at < now() - interval '90 days'`)
-			cancel()
-			if err != nil {
-				log.Printf("WARN: webhook_deliveries cleanup: %v", err)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				_, err := pool.Exec(cctx, `DELETE FROM webhook_deliveries WHERE created_at < now() - interval '90 days'`)
+				cancel()
+				if err != nil {
+					log.Printf("WARN: webhook_deliveries cleanup: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+func startWebhookRetryWorker(ctx context.Context, billing *billingservice.Service) {
+	if billing == nil {
+		return
+	}
+	go func() {
+		t := time.NewTicker(1 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				cctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+				processed, svcErr := billing.RetryPendingWebhookDeliveries(cctx, "razorpay", 25)
+				cancel()
+				if svcErr != nil {
+					log.Printf("WARN: webhook retry worker: %s", svcErr.Message)
+					continue
+				}
+				if processed > 0 {
+					log.Printf("webhook retry worker processed=%d", processed)
+				}
 			}
 		}
 	}()
@@ -124,8 +161,10 @@ func main() {
 			log.Fatalf("migrate: %v", err)
 		}
 	}
-	startIdempotencyKeyCleanup(pool)
-	startWebhookDeliveriesCleanup(pool)
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	defer cleanupCancel()
+	startIdempotencyKeyCleanup(cleanupCtx, pool)
+	startWebhookDeliveriesCleanup(cleanupCtx, pool)
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
@@ -216,6 +255,7 @@ func main() {
 		cfg.OTPMaxAttempts,
 	)
 	srv.BillingService = billingservice.NewService(billingrepo.NewPGRepository(pool))
+	startWebhookRetryWorker(cleanupCtx, srv.BillingService)
 	srv.BroadcastService = broadcastservice.NewService(broadcastrepo.NewPGRepository(pool))
 	srv.EventService = eventservice.NewService(eventrepo.NewPGRepository(pool))
 	srv.GalleryService = galleryservice.NewService(galleryrepo.NewPGRepository(pool), srv.MediaSigner)
@@ -229,6 +269,7 @@ func main() {
 			publicCache = redisCache
 		}
 	}
+	srv.Cache = publicCache
 	srv.PublicService = publicservice.NewService(publicrepo.NewPGRepository(pool, readPool), srv.MediaSigner, publicCache)
 	srv.RSVPService = rsvpservice.NewService(
 		rsvprepo.NewPGRepository(pool),
@@ -271,6 +312,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Print("shutdown signal received")
+	cleanupCancel()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {

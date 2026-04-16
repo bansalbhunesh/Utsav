@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,4 +71,31 @@ func (r *RedisCache) DeleteKeysWithPrefix(ctx context.Context, prefix string) er
 		return r.client.Del(ctx, keys...).Err()
 	}
 	return nil
+}
+
+// BumpKey atomically increments a numeric cache key used as namespace version.
+func (r *RedisCache) BumpKey(ctx context.Context, key string) (int64, error) {
+	if r == nil || r.client == nil || strings.TrimSpace(key) == "" {
+		return 0, nil
+	}
+	return r.client.Incr(ctx, key).Result()
+}
+
+// ReadIntKey reads a numeric key; missing keys are interpreted as zero.
+func (r *RedisCache) ReadIntKey(ctx context.Context, key string) (int64, error) {
+	if r == nil || r.client == nil || strings.TrimSpace(key) == "" {
+		return 0, nil
+	}
+	raw, err := r.client.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	n, convErr := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if convErr != nil {
+		return 0, nil
+	}
+	return n, nil
 }
