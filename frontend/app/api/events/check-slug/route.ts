@@ -13,9 +13,15 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const res = await fetch(`${API_URL}/v1/public/events/check-slug?slug=${slug}`)
-    if (!res.ok) throw new Error('API request failed')
-    const data = await res.json()
+    const res = await fetch(`${API_URL}/v1/events/check-slug?slug=${encodeURIComponent(slug)}`, {
+      headers: {
+        cookie: req.headers.get('cookie') || '',
+      },
+    })
+    const data = await res.json().catch(() => ({ error: 'API request failed' }))
+    if (!res.ok) {
+      return NextResponse.json(data, { status: res.status })
+    }
     return NextResponse.json(data)
   } catch {
     return NextResponse.json({ error: 'Failed to check slug availability' }, { status: 500 })

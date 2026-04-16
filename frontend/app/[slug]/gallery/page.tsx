@@ -7,9 +7,9 @@ import { guestApiFetch } from '@/lib/api'
 import { parsePublicEventResponse } from '@/lib/contracts/public'
 
 interface GalleryPageProps {
-  params: {
+  params: Promise<{
     slug: string
-  }
+  }>
 }
 
 async function getEventData(slug: string) {
@@ -23,7 +23,8 @@ async function getEventData(slug: string) {
 }
 
 export default async function GalleryPage({ params }: GalleryPageProps) {
-  const event = await getEventData(params.slug)
+  const { slug } = await params
+  const event = await getEventData(slug)
   if (!event) notFound()
 
   return (
@@ -32,7 +33,7 @@ export default async function GalleryPage({ params }: GalleryPageProps) {
       <div className="bg-white border-b border-zinc-100 px-6 py-4 sticky top-0 z-20 backdrop-blur-md bg-white/80">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Link href={`/${params.slug}`}>
+            <Link href={`/${slug}`}>
                <Button variant="ghost" size="icon" className="rounded-full">
                  <ChevronLeft className="h-5 w-5" />
                </Button>
@@ -54,7 +55,7 @@ export default async function GalleryPage({ params }: GalleryPageProps) {
            <p className="text-zinc-500 font-medium">Every smile, every dance, and every blessing captured by the ones who matter most.</p>
         </div>
 
-        <GalleryGrid eventSlug={params.slug} />
+        <GalleryGrid eventSlug={slug} />
       </div>
     </main>
   )

@@ -5,9 +5,9 @@ import { guestApiFetch } from '@/lib/api'
 import { parseMemoryPayloadResponse, parsePublicEventResponse, parsePublicGalleryResponse } from '@/lib/contracts/public'
 
 interface MemoryBookProps {
-  params: {
+  params: Promise<{
     slug: string
-  }
+  }>
 }
 
 async function getStats(slug: string) {
@@ -38,7 +38,8 @@ async function getStats(slug: string) {
 }
 
 export default async function MemoryBookPage({ params }: MemoryBookProps) {
-  const data = await getStats(params.slug)
+  const { slug } = await params
+  const data = await getStats(slug)
   if (!data) notFound()
 
   const { event, totalWishes, totalShagunPaise, totalPhotos, featuredWishes } = data

@@ -22,9 +22,9 @@ import type { PublicSubEvent } from '@/types/public-event'
 import { parsePublicEventResponse } from '@/lib/contracts/public'
 
 interface EventPageProps {
-  params: {
+  params: Promise<{
     slug: string
-  }
+  }>
 }
 
 async function getEventData(slug: string) {
@@ -38,7 +38,8 @@ async function getEventData(slug: string) {
 }
 
 export default async function GuestEventPage({ params }: EventPageProps) {
-  const event = await getEventData(params.slug)
+  const { slug } = await params
+  const event = await getEventData(slug)
 
   if (!event) {
     notFound()
@@ -87,7 +88,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
             <Link href="#rsvp" className="flex-1">
               <Button className="w-full h-14 bg-white text-zinc-900 font-bold rounded-2xl shadow-xl">RSVP Now</Button>
             </Link>
-            <Link href={`/${params.slug}/shagun`} className="flex-1">
+            <Link href={`/${slug}/shagun`} className="flex-1">
               <Button className="w-full h-14 text-white font-bold rounded-2xl shadow-xl" style={{ backgroundColor: themeColor }}>Gifting</Button>
             </Link>
           </div>
@@ -108,7 +109,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
           <h2 className="text-2xl font-bold text-zinc-900">Are you joining us?</h2>
           <RSVPForm
             eventTitle={event.title}
-            eventSlug={params.slug}
+            eventSlug={slug}
             subEvents={subEvents}
           />
         </section>
@@ -194,12 +195,12 @@ export default async function GuestEventPage({ params }: EventPageProps) {
           </div>
 
           <div className="max-w-lg mx-auto relative z-10">
-            <RSVPForm eventTitle={event.title} eventSlug={params.slug} subEvents={subEvents} />
+            <RSVPForm eventTitle={event.title} eventSlug={slug} subEvents={subEvents} />
           </div>
         </section>
 
         <section className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-           <Link href={`/${params.slug}/gallery`} className="group">
+           <Link href={`/${slug}/gallery`} className="group">
               <div className="bg-zinc-900 rounded-[32px] p-8 text-white space-y-4 hover:bg-black transition-all">
                  <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center border border-white/20">
                     <ImageIcon className="w-6 h-6" />
@@ -212,7 +213,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
               </div>
            </Link>
 
-           <Link href={`/${params.slug}/memory-book`} className="group">
+           <Link href={`/${slug}/memory-book`} className="group">
               <div className="bg-white border border-zinc-200 rounded-[32px] p-8 space-y-4 hover:border-orange-200 transition-all shadow-sm">
                  <div className="w-12 h-12 bg-orange-100 rounded-2xl flex items-center justify-center text-theme">
                     <Heart className="w-6 h-6 fill-current" style={{ color: themeColor }} />
@@ -234,7 +235,7 @@ export default async function GuestEventPage({ params }: EventPageProps) {
               <h3 className="text-2xl font-bold text-zinc-900">Digital Shagun</h3>
               <p className="text-zinc-600">Send your blessings and gifts directly to the hosts via secure UPI payment.</p>
            </div>
-           <Link href={`/${params.slug}/shagun`}>
+           <Link href={`/${slug}/shagun`}>
               <Button className="h-14 px-8 text-white font-bold rounded-2xl group" style={{ backgroundColor: themeColor }}>
                  Open Gifting Box
                  <ChevronRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />

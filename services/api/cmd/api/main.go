@@ -212,6 +212,14 @@ func main() {
 	if isProd && strings.TrimSpace(cfg.RazorpayWebhookSecret) == "" {
 		log.Fatal("RAZORPAY_WEBHOOK_SECRET must be set in production")
 	}
+	if isProd && strings.EqualFold(strings.TrimSpace(cfg.OTPProvider), "msg91") {
+		if strings.TrimSpace(cfg.OTPAPIKey) == "" {
+			log.Fatal("OTP_API_KEY must be set when OTP_PROVIDER=msg91 in production")
+		}
+		if strings.TrimSpace(cfg.OTPSenderID) == "" {
+			log.Fatal("OTP_SENDER_ID must be set when OTP_PROVIDER=msg91 in production")
+		}
+	}
 	newLimiter := func(max int) ratelimit.Limiter {
 		if strings.TrimSpace(cfg.UpstashRESTURL) != "" && strings.TrimSpace(cfg.UpstashRESTToken) != "" {
 			return ratelimit.NewUpstashRESTLimiter(cfg.UpstashRESTURL, cfg.UpstashRESTToken, max, window)

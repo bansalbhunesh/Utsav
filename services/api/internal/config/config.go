@@ -145,6 +145,8 @@ func Load() (*Config, error) {
 	if dbStmtMs < 100 {
 		dbStmtMs = 5000
 	}
+	corsOrigins := splitAndTrimCSV(cors)
+
 	return &Config{
 		HTTPPort:                 port,
 		DatabaseURL:              dsn,
@@ -158,7 +160,7 @@ func Load() (*Config, error) {
 		OTPAPIKey:                getenv("OTP_API_KEY", ""),
 		OTPAPISecret:             getenv("OTP_API_SECRET", ""),
 		OTPSenderID:              getenv("OTP_SENDER_ID", ""),
-		CORSOrigins:              []string{cors},
+		CORSOrigins:              corsOrigins,
 		RunMigrations:            runMig,
 		ObjectStorePublicBaseURL: getenv("OBJECT_STORE_PUBLIC_BASE_URL", ""),
 		ObjectStoreBucket:        getenv("OBJECT_STORE_BUCKET", "utsav"),
@@ -209,4 +211,16 @@ func mustAtoi(v string, def int) int {
 		return def
 	}
 	return n
+}
+
+func splitAndTrimCSV(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		s := strings.TrimSpace(p)
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

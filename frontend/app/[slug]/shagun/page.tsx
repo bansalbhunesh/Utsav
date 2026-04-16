@@ -5,9 +5,9 @@ import { guestApiFetch } from '@/lib/api'
 import { parsePublicEventResponse } from '@/lib/contracts/public'
 
 interface ShagunPageProps {
-  params: {
+  params: Promise<{
     slug: string
-  }
+  }>
 }
 
 async function getEventBySlug(slug: string) {
@@ -21,7 +21,8 @@ async function getEventBySlug(slug: string) {
 }
 
 export default async function ShagunPage({ params }: ShagunPageProps) {
-  const event = await getEventBySlug(params.slug)
+  const { slug } = await params
+  const event = await getEventBySlug(slug)
   if (!event) notFound()
   
   const hostName = event.profiles?.full_name || 'the Host'
