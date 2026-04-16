@@ -198,81 +198,15 @@ func (r *PGRepository) ListGuests(ctx context.Context, p ListGuestsParams) ([]Gu
 	}
 
 	rows, err := r.read.Query(ctx, `
-		WITH guest_enriched AS (
-			SELECT
-				g.id, g.name, g.phone, g.email, g.relationship, g.side, g.tags, g.group_id,
-				COALESCE(r.rsvp_yes_count, 0) AS rsvp_yes_count,
-				COALESCE(r.rsvp_total_count, 0) AS rsvp_total_count,
-				COALESCE(evt.sub_event_total, 0) AS sub_event_total,
-				r.latest_rsvp_at AS latest_rsvp_at,
-				COALESCE(s.total_shagun_paise, 0) AS total_shagun_paise,
-				LEAST(100, GREATEST(0,
-					ROUND(100.0 * (
-						(0.30 * prio.rel_w + 0.20 * prio.rc + 0.15 * prio.rs + 0.15 * prio.ec + 0.10 * prio.hr + 0.10 * prio.ho)
-						* prio.decay * prio.unc
-					))::double precision
-				))::int AS priority_score
-			FROM guests g
-			CROSS JOIN (
-				SELECT COUNT(*)::int AS sub_event_total FROM sub_events WHERE event_id=$1
-			) evt
-			LEFT JOIN LATERAL (
-				SELECT
-					COUNT(*) FILTER (WHERE rr.status='yes') AS rsvp_yes_count,
-					COUNT(*) AS rsvp_total_count,
-					MAX(rr.updated_at) AS latest_rsvp_at
-				FROM rsvp_responses rr
-				WHERE rr.event_id=g.event_id AND rr.guest_phone=g.phone
-			) r ON TRUE
-			LEFT JOIN LATERAL (
-				SELECT COALESCE(SUM(se.amount_paise),0) AS total_shagun_paise
-				FROM shagun_entries se
-				WHERE se.event_id=g.event_id
-				  AND (se.guest_id=g.id OR COALESCE(se.meta->>'guest_phone','')=g.phone)
-			) s ON TRUE
-			CROSS JOIN LATERAL (
-				SELECT
-					(CASE lower(trim(COALESCE(g.relationship, '')))
-						WHEN 'close_family' THEN 1.0::float8
-						WHEN 'immediate_family' THEN 1.0::float8
-						WHEN 'family' THEN 0.85::float8
-						WHEN 'relative' THEN 0.85::float8
-						WHEN 'relatives' THEN 0.85::float8
-						WHEN 'friend' THEN 0.65::float8
-						WHEN 'friends' THEN 0.65::float8
-						WHEN 'colleague' THEN 0.45::float8
-						WHEN 'coworker' THEN 0.45::float8
-						ELSE CASE WHEN trim(COALESCE(g.relationship, '')) = '' THEN 0.2::float8 ELSE 0.35::float8 END
-					END) AS rel_w,
-					LEAST(1.0::float8, GREATEST(0.0::float8, COALESCE(r.rsvp_yes_count, 0)::float8 / 3.0)) AS rc,
-					CASE WHEN r.latest_rsvp_at IS NULL THEN 0.0::float8
-						ELSE LEAST(1.0::float8, GREATEST(0.0::float8, 1.0::float8 - ((EXTRACT(EPOCH FROM (now() - r.latest_rsvp_at)) / 86400.0) / 14.0)))
-					END AS rs,
-					CASE WHEN COALESCE(evt.sub_event_total, 0) = 0 THEN 0.0::float8
-						ELSE LEAST(1.0::float8, GREATEST(0.0::float8, COALESCE(r.rsvp_total_count, 0)::float8 / NULLIF(evt.sub_event_total, 0)::float8))
-					END AS ec,
-					CASE WHEN COALESCE(r.rsvp_total_count, 0) = 0 THEN 0.0::float8
-						ELSE LEAST(1.0::float8, GREATEST(0.0::float8, COALESCE(r.rsvp_yes_count, 0)::float8 / NULLIF(r.rsvp_total_count, 0)::float8))
-					END AS hr,
-					(CASE WHEN EXISTS (
-						SELECT 1 FROM unnest(COALESCE(g.tags, ARRAY[]::text[])) AS t(tag)
-						WHERE lower(trim(tag)) IN ('vip', 'priority', 'must_call')
-					) THEN 1.0::float8 ELSE 0.0::float8 END) AS ho,
-					CASE WHEN r.latest_rsvp_at IS NULL THEN 0.90::float8
-						ELSE 0.75::float8 + 0.25::float8 * exp(-(EXTRACT(EPOCH FROM (now() - r.latest_rsvp_at)) / 86400.0) / 30.0)
-					END AS decay,
-					GREATEST(0.70::float8, LEAST(1.0::float8, 1.0::float8 - 0.08::float8 * (
-						(CASE WHEN COALESCE(r.rsvp_total_count, 0) = 0 THEN 3 ELSE 0 END) +
-						(CASE WHEN COALESCE(evt.sub_event_total, 0) = 0 THEN 1 ELSE 0 END)
-					)::float8)) AS unc
-			) prio
-			WHERE g.event_id=$1
-		)
 		SELECT
 			g.id, g.name, g.phone, g.email, g.relationship, g.side, g.tags, g.group_id,
-			g.rsvp_yes_count, g.rsvp_total_count, g.sub_event_total, g.latest_rsvp_at, g.total_shagun_paise,
+			g.rsvp_yes_count, g.rsvp_total_count, evt.sub_event_total, g.latest_rsvp_at, g.total_shagun_paise,
 			g.priority_score
-		FROM guest_enriched g WHERE 1=1`+seekSQL+tierSQL+`
+		FROM guests g
+		CROSS JOIN LATERAL (
+			SELECT COUNT(*)::int AS sub_event_total FROM sub_events WHERE event_id = $1
+		) evt
+		WHERE g.event_id = $1`+seekSQL+tierSQL+`
 		ORDER BY `+orderClause+`
 		`+limitOffsetSQL, args...)
 	if err != nil {
