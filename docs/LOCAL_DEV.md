@@ -68,9 +68,9 @@ If OTP endpoints return **429**, in-memory rate limits tripped (15 minutes): hos
 `GET /v1/events/:eventId/guests` accepts `limit`, `offset`, `sort`, `priority_tier`, and optional `cursor`.
 
 - **Offset** works for every sort, including `priority_desc` / `priority_asc` and tier filters (`priority_tier`).
-- **Cursor (keyset)** is available when `priority_tier` is empty and `sort` is **not** `priority_asc` / `priority_desc`. Use the `next_cursor` value from the JSON response as the `cursor` query parameter for the following page (omit `offset` when using `cursor`).
+- **Cursor (keyset)** is available when `sort` is **not** `priority_asc` / `priority_desc` (works with `priority_tier` as well). Use `next_cursor` from the JSON response as the `cursor` query parameter for the next page (omit `offset` when using `cursor`).
 
-The event **Guests** UI uses cursor pagination automatically for name / RSVP / shagun sorts; priority-based sorts keep using offset pages.
+The event **Guests** UI uses cursor pagination for name / RSVP / shagun sorts (including tier filters); priority-based sorts keep using offset pages.
 
 ## 5. Tests
 

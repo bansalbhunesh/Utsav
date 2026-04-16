@@ -52,11 +52,12 @@ type GuestInput struct {
 }
 
 type ListGuestsParams struct {
-	EventID uuid.UUID
-	Limit   int
-	Offset  int
-	Sort    string
-	Cursor  *ListGuestsCursor
+	EventID      uuid.UUID
+	Limit        int
+	Offset       int
+	Sort         string
+	Cursor       *ListGuestsCursor
+	PriorityTier string // lowercase critical|important|optional; empty = no filter
 }
 
 type Repository interface {
@@ -162,6 +163,19 @@ func (r *PGRepository) ListGuests(ctx context.Context, p ListGuestsParams) ([]Gu
 		return nil, fmt.Errorf("guest list cursor is not valid for sort %q", sort)
 	}
 
+	tierSQL := ""
+	switch strings.ToLower(strings.TrimSpace(p.PriorityTier)) {
+	case "critical", "important", "optional":
+		t := strings.ToLower(strings.TrimSpace(p.PriorityTier))
+		tierSQL = fmt.Sprintf(` AND (
+			CASE WHEN g.priority_score >= 80 THEN 'critical'
+			     WHEN g.priority_score >= 50 THEN 'important'
+			     ELSE 'optional' END
+		) = $%d::text`, argPos)
+		args = append(args, t)
+		argPos++
+	}
+
 	limitPos := argPos
 	args = append(args, limit)
 	argPos++
@@ -179,7 +193,7 @@ func (r *PGRepository) ListGuests(ctx context.Context, p ListGuestsParams) ([]Gu
 				g.id, g.name, g.phone, g.email, g.relationship, g.side, g.tags, g.group_id,
 				COALESCE(r.rsvp_yes_count, 0) AS rsvp_yes_count,
 				COALESCE(r.rsvp_total_count, 0) AS rsvp_total_count,
-				COALESCE(sev.sub_event_total, 0) AS sub_event_total,
+				COALESCE(evt.sub_event_total, 0) AS sub_event_total,
 				r.latest_rsvp_at AS latest_rsvp_at,
 				COALESCE(s.total_shagun_paise, 0) AS total_shagun_paise,
 				LEAST(100, GREATEST(0,
@@ -189,6 +203,9 @@ func (r *PGRepository) ListGuests(ctx context.Context, p ListGuestsParams) ([]Gu
 					))::double precision
 				))::int AS priority_score
 			FROM guests g
+			CROSS JOIN (
+				SELECT COUNT(*)::int AS sub_event_total FROM sub_events WHERE event_id=$1
+			) evt
 			LEFT JOIN LATERAL (
 				SELECT
 					COUNT(*) FILTER (WHERE rr.status='yes') AS rsvp_yes_count,
@@ -197,11 +214,6 @@ func (r *PGRepository) ListGuests(ctx context.Context, p ListGuestsParams) ([]Gu
 				FROM rsvp_responses rr
 				WHERE rr.event_id=g.event_id AND rr.guest_phone=g.phone
 			) r ON TRUE
-			LEFT JOIN LATERAL (
-				SELECT COUNT(*)::int AS sub_event_total
-				FROM sub_events sev
-				WHERE sev.event_id=g.event_id
-			) sev ON TRUE
 			LEFT JOIN LATERAL (
 				SELECT COALESCE(SUM(se.amount_paise),0) AS total_shagun_paise
 				FROM shagun_entries se
@@ -226,8 +238,8 @@ func (r *PGRepository) ListGuests(ctx context.Context, p ListGuestsParams) ([]Gu
 					CASE WHEN r.latest_rsvp_at IS NULL THEN 0.0::float8
 						ELSE LEAST(1.0::float8, GREATEST(0.0::float8, 1.0::float8 - ((EXTRACT(EPOCH FROM (now() - r.latest_rsvp_at)) / 86400.0) / 14.0)))
 					END AS rs,
-					CASE WHEN COALESCE(sev.sub_event_total, 0) = 0 THEN 0.0::float8
-						ELSE LEAST(1.0::float8, GREATEST(0.0::float8, COALESCE(r.rsvp_total_count, 0)::float8 / NULLIF(sev.sub_event_total, 0)::float8))
+					CASE WHEN COALESCE(evt.sub_event_total, 0) = 0 THEN 0.0::float8
+						ELSE LEAST(1.0::float8, GREATEST(0.0::float8, COALESCE(r.rsvp_total_count, 0)::float8 / NULLIF(evt.sub_event_total, 0)::float8))
 					END AS ec,
 					CASE WHEN COALESCE(r.rsvp_total_count, 0) = 0 THEN 0.0::float8
 						ELSE LEAST(1.0::float8, GREATEST(0.0::float8, COALESCE(r.rsvp_yes_count, 0)::float8 / NULLIF(r.rsvp_total_count, 0)::float8))
@@ -241,7 +253,7 @@ func (r *PGRepository) ListGuests(ctx context.Context, p ListGuestsParams) ([]Gu
 					END AS decay,
 					GREATEST(0.70::float8, LEAST(1.0::float8, 1.0::float8 - 0.08::float8 * (
 						(CASE WHEN COALESCE(r.rsvp_total_count, 0) = 0 THEN 3 ELSE 0 END) +
-						(CASE WHEN COALESCE(sev.sub_event_total, 0) = 0 THEN 1 ELSE 0 END)
+						(CASE WHEN COALESCE(evt.sub_event_total, 0) = 0 THEN 1 ELSE 0 END)
 					)::float8)) AS unc
 			) prio
 			WHERE g.event_id=$1
@@ -250,7 +262,7 @@ func (r *PGRepository) ListGuests(ctx context.Context, p ListGuestsParams) ([]Gu
 			g.id, g.name, g.phone, g.email, g.relationship, g.side, g.tags, g.group_id,
 			g.rsvp_yes_count, g.rsvp_total_count, g.sub_event_total, g.latest_rsvp_at, g.total_shagun_paise,
 			g.priority_score
-		FROM guest_enriched g WHERE 1=1`+seekSQL+`
+		FROM guest_enriched g WHERE 1=1`+seekSQL+tierSQL+`
 		ORDER BY `+orderClause+`
 		`+limitOffsetSQL, args...)
 	if err != nil {

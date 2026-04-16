@@ -205,15 +205,24 @@ func (s *Service) SubmitRSVP(ctx context.Context, eventID, guestEventID uuid.UUI
 		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "RSVP payload is invalid."}
 	}
 
+	validStatuses := map[string]bool{"yes": true, "no": true, "maybe": true}
 	mapped := make([]rsvprepo.RSVPItem, 0, len(items))
 	for _, it := range items {
 		sid, err := uuid.Parse(it.SubEventID)
 		if err != nil {
 			return &ServiceError{Status: http.StatusBadRequest, Code: "BAD_SUB_EVENT", Message: "A sub event id is invalid."}
 		}
+		status := strings.ToLower(strings.TrimSpace(it.Status))
+		if !validStatuses[status] {
+			return &ServiceError{
+				Status:  http.StatusBadRequest,
+				Code:    "INVALID_RSVP_STATUS",
+				Message: "Status must be yes, no, or maybe.",
+			}
+		}
 		mapped = append(mapped, rsvprepo.RSVPItem{
 			SubEventID:          sid,
-			Status:              it.Status,
+			Status:              status,
 			MealPref:            it.MealPref,
 			Dietary:             it.Dietary,
 			AccommodationNeeded: it.AccommodationNeeded,

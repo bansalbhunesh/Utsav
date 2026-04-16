@@ -246,6 +246,20 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*RefreshRes
 	}, nil
 }
 
+// Logout revokes the refresh token in the database (best-effort). Invalid hex is ignored.
+func (s *Service) Logout(ctx context.Context, refreshToken string) {
+	refreshToken = strings.TrimSpace(refreshToken)
+	if refreshToken == "" {
+		return
+	}
+	raw, err := hex.DecodeString(refreshToken)
+	if err != nil || len(raw) != 32 {
+		return
+	}
+	sum := sha256.Sum256(raw)
+	_ = s.repo.RevokeRefreshTokenHash(ctx, hex.EncodeToString(sum[:]))
+}
+
 func (s *Service) GetMe(ctx context.Context, userID uuid.UUID) (*MeResult, *ServiceError) {
 	phone, displayName, err := s.repo.GetUserProfileByID(ctx, userID)
 	if err != nil {

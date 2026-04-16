@@ -73,7 +73,7 @@ export default function GuestsPage() {
   const offset = Number.isFinite(offsetRaw) && offsetRaw >= 0 ? offsetRaw : 0;
   const cursorParam = searchParams.get("cursor") ?? "";
   const supportsCursor =
-    !priorityTier && sort !== "priority_desc" && sort !== "priority_asc";
+    sort !== "priority_desc" && sort !== "priority_asc";
   const stackKey = guestCursorStackKey(eventId, sort, limit);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");

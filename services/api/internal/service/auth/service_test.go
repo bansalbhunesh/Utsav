@@ -25,6 +25,7 @@ func (m *mockAuthRepo) FindUserIDByPhone(context.Context, string) (uuid.UUID, er
 func (m *mockAuthRepo) CreateUserWithPhone(context.Context, string) (uuid.UUID, error) { return uuid.Nil, nil }
 func (m *mockAuthRepo) InsertRefreshTokenHash(context.Context, uuid.UUID, string) error { return nil }
 func (m *mockAuthRepo) ConsumeRefreshTokenHash(context.Context, string) (uuid.UUID, error) { return uuid.Nil, nil }
+func (m *mockAuthRepo) RevokeRefreshTokenHash(context.Context, string) error { return nil }
 func (m *mockAuthRepo) GetUserProfileByID(ctx context.Context, userID uuid.UUID) (string, string, error) {
 	if m.getUserProfileByIDFn != nil {
 		return m.getUserProfileByIDFn(ctx, userID)

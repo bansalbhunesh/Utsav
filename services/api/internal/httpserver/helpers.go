@@ -291,9 +291,14 @@ func hashFingerprint(parts ...string) string {
 }
 
 func (s *Server) reserveIdempotencyKey(ctx context.Context, scope, key, fingerprint string) (bool, error) {
+	if _, err := s.Pool.Exec(ctx, `
+		DELETE FROM idempotency_keys WHERE scope=$1 AND key=$2 AND expires_at < now()
+	`, scope, key); err != nil {
+		return false, err
+	}
 	tag, err := s.Pool.Exec(ctx, `
-		INSERT INTO idempotency_keys (scope, key, fingerprint)
-		VALUES ($1,$2,$3)
+		INSERT INTO idempotency_keys (scope, key, fingerprint, expires_at)
+		VALUES ($1,$2,$3, now() + interval '24 hours')
 		ON CONFLICT (scope, key) DO NOTHING
 	`, scope, key, fingerprint)
 	if err != nil {
@@ -302,7 +307,8 @@ func (s *Server) reserveIdempotencyKey(ctx context.Context, scope, key, fingerpr
 	if tag.RowsAffected() == 0 {
 		var existing string
 		readErr := s.Pool.QueryRow(ctx, `
-			SELECT fingerprint FROM idempotency_keys WHERE scope=$1 AND key=$2
+			SELECT fingerprint FROM idempotency_keys
+			WHERE scope=$1 AND key=$2 AND expires_at > now()
 		`, scope, key).Scan(&existing)
 		if readErr != nil {
 			return false, readErr

@@ -39,6 +39,7 @@ import (
 	"github.com/bhune/utsav/services/api/internal/repository/rsvprepo"
 	"github.com/bhune/utsav/services/api/internal/repository/shagunrepo"
 	"github.com/bhune/utsav/services/api/internal/repository/vendorrepo"
+	"github.com/jackc/pgx/v5/pgxpool"
 	authservice "github.com/bhune/utsav/services/api/internal/service/auth"
 	billingservice "github.com/bhune/utsav/services/api/internal/service/billing"
 	broadcastservice "github.com/bhune/utsav/services/api/internal/service/broadcast"
@@ -52,6 +53,21 @@ import (
 	shagunservice "github.com/bhune/utsav/services/api/internal/service/shagun"
 	vendorservice "github.com/bhune/utsav/services/api/internal/service/vendor"
 )
+
+func startIdempotencyKeyCleanup(pool *pgxpool.Pool) {
+	go func() {
+		t := time.NewTicker(1 * time.Hour)
+		defer t.Stop()
+		for range t.C {
+			cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			_, err := pool.Exec(cctx, `DELETE FROM idempotency_keys WHERE expires_at < now()`)
+			cancel()
+			if err != nil {
+				log.Printf("WARN: idempotency_keys cleanup: %v", err)
+			}
+		}
+	}()
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -71,6 +87,7 @@ func main() {
 			log.Fatalf("migrate: %v", err)
 		}
 	}
+	startIdempotencyKeyCleanup(pool)
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
@@ -91,7 +108,7 @@ func main() {
 	}
 	r.Use(
 		func(c *gin.Context) {
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 5*1024*1024)
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 2*1024*1024)
 			c.Next()
 		},
 		middleware.RecoverJSON(),

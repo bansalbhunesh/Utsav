@@ -130,6 +130,9 @@ func (s *Server) postRefresh(c *gin.Context) {
 }
 
 func (s *Server) postLogout(c *gin.Context) {
+	if tok, err := c.Cookie(refreshTokenCookieName); err == nil && s.AuthService != nil {
+		s.AuthService.Logout(c.Request.Context(), strings.TrimSpace(tok))
+	}
 	s.clearAuthCookies(c)
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

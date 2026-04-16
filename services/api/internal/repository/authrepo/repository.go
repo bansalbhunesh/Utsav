@@ -26,6 +26,7 @@ type Repository interface {
 	CreateUserWithPhone(ctx context.Context, phone string) (uuid.UUID, error)
 	InsertRefreshTokenHash(ctx context.Context, userID uuid.UUID, tokenHash string) error
 	ConsumeRefreshTokenHash(ctx context.Context, tokenHash string) (uuid.UUID, error)
+	RevokeRefreshTokenHash(ctx context.Context, tokenHash string) error
 	GetUserProfileByID(ctx context.Context, userID uuid.UUID) (string, string, error)
 }
 
@@ -100,6 +101,11 @@ func (r *PGRepository) ConsumeRefreshTokenHash(ctx context.Context, tokenHash st
 		return uuid.Nil, err
 	}
 	return userID, nil
+}
+
+func (r *PGRepository) RevokeRefreshTokenHash(ctx context.Context, tokenHash string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM refresh_tokens WHERE token_hash=$1`, tokenHash)
+	return err
 }
 
 func (r *PGRepository) GetUserProfileByID(ctx context.Context, userID uuid.UUID) (string, string, error) {

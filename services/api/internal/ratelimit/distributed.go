@@ -58,6 +58,9 @@ type upstashResult struct {
 	Error  string `json:"error"`
 }
 
+// incrExpireOnceLua atomically increments the key and sets TTL on first hit (avoids INCR/EXPIRE race).
+const incrExpireOnceLua = `local c = redis.call('INCR', KEYS[1]); if c == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end; return c`
+
 func (l *UpstashRESTLimiter) Allow(ctx context.Context, key string) (bool, error) {
 	if l.restURL == "" || l.token == "" {
 		return false, fmt.Errorf("upstash not configured")
@@ -68,8 +71,7 @@ func (l *UpstashRESTLimiter) Allow(ctx context.Context, key string) (bool, error
 	}
 
 	pipeline := []upstashCommand{
-		{Command: []string{"INCR", key}},
-		{Command: []string{"EXPIRE", key, strconv.Itoa(windowSec), "NX"}},
+		{Command: []string{"EVAL", incrExpireOnceLua, "1", key, strconv.Itoa(windowSec)}},
 	}
 	body, _ := json.Marshal(pipeline)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, l.restURL+"/pipeline", bytes.NewReader(body))

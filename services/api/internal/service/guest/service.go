@@ -125,31 +125,42 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 	}
 
 	if tierFilter != "" {
-		if decoded != nil {
-			return nil, nil, &ServiceError{Status: http.StatusBadRequest, Code: "CURSOR_NOT_SUPPORTED", Message: "Cursor pagination is not supported when priority_tier is set."}
+		fetch := limit + 1
+		if fetch > 10000 {
+			fetch = 10000
 		}
-		list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{EventID: eventID, Limit: guestListPrefetchMax, Offset: 0, Sort: sort})
+		list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{
+			EventID:      eventID,
+			Limit:        fetch,
+			Offset:       offset,
+			Sort:         sort,
+			Cursor:       decoded,
+			PriorityTier: tierFilter,
+		})
 		if err != nil {
 			return nil, nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
 		}
 		applyGuestPriorityFromSQL(list)
-		if sortNorm == "priority_desc" || sortNorm == "priority_asc" {
-			sortGuestsByPriority(list, sortNorm)
+		hasMore := len(list) > limit
+		if hasMore {
+			list = list[:limit]
 		}
-		filtered := make([]guestrepo.Guest, 0, len(list))
-		for _, g := range list {
-			if strings.ToLower(g.PriorityTier) == tierFilter {
-				filtered = append(filtered, g)
+		var next *string
+		if hasMore && limit > 0 {
+			last := list[len(list)-1]
+			cur := guestrepo.CursorFromGuestRow(sortNorm, last)
+			if enc, err := guestrepo.EncodeListGuestsCursor(cur); err == nil {
+				next = &enc
 			}
 		}
-		return paginateGuests(filtered, offset, limit), nil, nil
+		return list, next, nil
 	}
 
 	if sortNorm == "priority_desc" || sortNorm == "priority_asc" {
 		if decoded != nil {
 			return nil, nil, &ServiceError{Status: http.StatusBadRequest, Code: "CURSOR_NOT_SUPPORTED", Message: "Cursor pagination is not supported for priority sort; use offset or omit sort=priority_*."}
 		}
-		list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{EventID: eventID, Limit: guestListPrefetchMax, Offset: 0, Sort: sort})
+		list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{EventID: eventID, Limit: guestListPrefetchMax, Offset: 0, Sort: sort, PriorityTier: ""})
 		if err != nil {
 			return nil, nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
 		}
@@ -167,11 +178,12 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 		fetch = 10000
 	}
 	list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{
-		EventID: eventID,
-		Limit:   fetch,
-		Offset:  offset,
-		Sort:    sort,
-		Cursor:  decoded,
+		EventID:      eventID,
+		Limit:        fetch,
+		Offset:       offset,
+		Sort:         sort,
+		Cursor:       decoded,
+		PriorityTier: "",
 	})
 	if err != nil {
 		return nil, nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
