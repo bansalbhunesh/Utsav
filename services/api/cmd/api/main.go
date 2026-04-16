@@ -137,11 +137,15 @@ func main() {
 		middleware.CORS(cfg.CORSOrigins),
 	)
 
+	dbHealthCtx, dbHealthCancel := context.WithCancel(context.Background())
+	defer dbHealthCancel()
+
 	srv := &httpserver.Server{
-		Pool:        pool,
-		ReadPool:    readPool,
-		Config:      cfg,
-		MediaSigner: media.URLSigner{BaseURL: cfg.ObjectStorePublicBaseURL},
+		Pool:          pool,
+		ReadPool:      readPool,
+		Config:        cfg,
+		MediaSigner:   media.URLSigner{BaseURL: cfg.ObjectStorePublicBaseURL},
+		DBHealthCtx:   dbHealthCtx,
 	}
 	window := time.Duration(cfg.RateLimitWindowSec) * time.Second
 	if isProd && strings.TrimSpace(cfg.DevOTPCode) != "" {
@@ -264,6 +268,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Print("shutdown signal received")
+	dbHealthCancel()
 	if asynqServer != nil {
 		asynqServer.Shutdown()
 	}

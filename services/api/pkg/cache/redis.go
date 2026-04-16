@@ -47,12 +47,23 @@ func (r *RedisCache) Delete(ctx context.Context, keys ...string) error {
 	return r.client.Del(ctx, keys...).Err()
 }
 
-// BumpKey atomically increments a numeric cache key used as namespace version.
+// guestlistNamespaceKeyTTL bounds lifetime of monotonic counter keys (e.g. guestlist_nsver:{eventID})
+// so inactive events do not leave unbounded Redis keys; refreshed on each bump.
+const guestlistNamespaceKeyTTL = 30 * 24 * time.Hour
+
+// BumpKey atomically increments a numeric cache key and extends TTL (namespace invalidation counters).
 func (r *RedisCache) BumpKey(ctx context.Context, key string) (int64, error) {
-	if r == nil || r.client == nil || strings.TrimSpace(key) == "" {
+	k := strings.TrimSpace(key)
+	if r == nil || r.client == nil || k == "" {
 		return 0, nil
 	}
-	return r.client.Incr(ctx, key).Result()
+	pipe := r.client.TxPipeline()
+	incr := pipe.Incr(ctx, k)
+	pipe.Expire(ctx, k, guestlistNamespaceKeyTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, err
+	}
+	return incr.Val(), nil
 }
 
 // ReadIntKey reads a numeric key; missing keys are interpreted as zero.

@@ -14,17 +14,26 @@ const (
 	dbHealthOpenAfter    = 3 // consecutive ping failures before rejecting traffic
 )
 
-// startDBHealthPoller runs until process exit. It opens a fail-fast gate after repeated ping failures.
+// startDBHealthPoller runs until DBHealthCtx is cancelled or process exit. It opens a fail-fast gate after repeated ping failures.
 func (s *Server) startDBHealthPoller() {
 	if s.Pool == nil {
 		return
+	}
+	ctx := s.DBHealthCtx
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	s.dbReady.Store(true)
 	s.runDBPingOnce()
 	ticker := time.NewTicker(dbHealthPollInterval)
 	defer ticker.Stop()
-	for range ticker.C {
-		s.runDBPingOnce()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.runDBPingOnce()
+		}
 	}
 }
 

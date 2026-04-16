@@ -83,6 +83,8 @@ type Server struct {
 	dbReady      atomic.Bool
 	dbFailStreak atomic.Uint32
 	dbHealthOnce sync.Once
+	// DBHealthCtx cancels the background DB ping loop on API shutdown. If nil, the poller runs until process exit.
+	DBHealthCtx context.Context
 	MediaSigner  media.Signer
 	AuthService  *authservice.Service
 	BillingService *billingservice.Service
