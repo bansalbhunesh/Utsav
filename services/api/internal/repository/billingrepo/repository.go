@@ -286,11 +286,21 @@ func (r *PGRepository) RetryPendingWebhookDeliveries(ctx context.Context, provid
 	if limit <= 0 {
 		limit = 25
 	}
+	pv := strings.TrimSpace(strings.ToLower(provider))
+
+	// Single transaction: claim rows with SKIP LOCKED so each API replica gets a disjoint batch
+	// (no duplicate work / double payment attempts across Render instances).
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
 	type row struct {
 		eventKey string
 		orderID  string
 	}
-	rows, err := r.pool.Query(ctx, `
+	rows, err := tx.Query(ctx, `
 		SELECT event_key, order_id
 		FROM webhook_deliveries
 		WHERE provider = $1
@@ -299,43 +309,28 @@ func (r *PGRepository) RetryPendingWebhookDeliveries(ctx context.Context, provid
 		  AND next_retry_at <= now()
 		ORDER BY next_retry_at ASC
 		LIMIT $2
-	`, strings.TrimSpace(strings.ToLower(provider)), limit)
+		FOR UPDATE SKIP LOCKED
+	`, pv, limit)
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
 	pending := make([]row, 0, limit)
 	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.eventKey, &r.orderID); err != nil {
+		var rw row
+		if err := rows.Scan(&rw.eventKey, &rw.orderID); err != nil {
+			rows.Close()
 			return 0, err
 		}
-		pending = append(pending, r)
+		pending = append(pending, rw)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return 0, err
 	}
+	rows.Close()
+
 	processed := 0
 	for _, p := range pending {
-		tx, err := r.pool.Begin(ctx)
-		if err != nil {
-			return processed, err
-		}
-		var status string
-		err = tx.QueryRow(ctx, `
-			SELECT status
-			FROM webhook_deliveries
-			WHERE provider=$1 AND event_key=$2
-			FOR UPDATE
-		`, strings.TrimSpace(strings.ToLower(provider)), p.eventKey).Scan(&status)
-		if err != nil {
-			_ = tx.Rollback(ctx)
-			continue
-		}
-		if status == "processed" {
-			_ = tx.Commit(ctx)
-			continue
-		}
 		if _, _, err := markOrderPaidInTx(ctx, tx, p.orderID); err != nil {
 			_, _ = tx.Exec(ctx, `
 				UPDATE webhook_deliveries
@@ -344,8 +339,7 @@ func (r *PGRepository) RetryPendingWebhookDeliveries(ctx context.Context, provid
 					last_error = LEFT($3, 1024),
 					next_retry_at = now() + interval '5 minutes'
 				WHERE provider=$1 AND event_key=$2
-			`, strings.TrimSpace(strings.ToLower(provider)), p.eventKey, err.Error())
-			_ = tx.Commit(ctx)
+			`, pv, p.eventKey, err.Error())
 			continue
 		}
 		if _, err := tx.Exec(ctx, `
@@ -356,14 +350,13 @@ func (r *PGRepository) RetryPendingWebhookDeliveries(ctx context.Context, provid
 				next_retry_at = now(),
 				processed_at = now()
 			WHERE provider=$1 AND event_key=$2
-		`, strings.TrimSpace(strings.ToLower(provider)), p.eventKey); err != nil {
-			_ = tx.Rollback(ctx)
-			continue
-		}
-		if err := tx.Commit(ctx); err != nil {
+		`, pv, p.eventKey); err != nil {
 			continue
 		}
 		processed++
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
 	}
 	return processed, nil
 }
