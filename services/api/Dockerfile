@@ -6,7 +6,7 @@ RUN go mod download
 WORKDIR /app
 COPY . .
 WORKDIR /app/services/api
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/utsav-api ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/utsav-api ./cmd/api
 
 FROM alpine:3.20
 RUN adduser -D -u 10001 utsav

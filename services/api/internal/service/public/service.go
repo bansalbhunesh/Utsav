@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bhune/utsav/services/api/internal/cache"
+	"github.com/bhune/utsav/services/api/pkg/cache"
 	"github.com/google/uuid"
 
-	"github.com/bhune/utsav/services/api/internal/media"
+	"github.com/bhune/utsav/services/api/pkg/media"
 	"github.com/bhune/utsav/services/api/internal/repository/publicrepo"
 )
 

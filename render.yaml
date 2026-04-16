@@ -3,13 +3,13 @@ services:
     name: utsav-api
     runtime: go
     rootDir: services/api
-    buildCommand: go build -o bin/api ./cmd/server
+    buildCommand: go build -o bin/api ./cmd/api
     startCommand: ./bin/api
     healthCheckPath: /health
     numInstances: 2
     autoDeploy: true
     envVars:
-      - key: HTTP_PORT
+      - key: PORT
         value: "8080"
       - key: ENV
         value: production

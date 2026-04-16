@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/bhune/utsav/services/api/internal/cache"
-	phoneutil "github.com/bhune/utsav/services/api/internal/phone"
+	"github.com/bhune/utsav/services/api/pkg/cache"
+	phoneutil "github.com/bhune/utsav/services/api/pkg/phone"
 	"github.com/bhune/utsav/services/api/internal/repository/guestrepo"
 )
 

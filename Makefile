@@ -11,8 +11,9 @@ api:
 	cd services/api && \
 	  MIGRATIONS_PATH=../../db/migrations \
 	  DATABASE_URL=postgres://utsav:utsav@127.0.0.1:5432/utsav?sslmode=disable \
+	  PORT=8080 \
 	  HTTP_PORT=8080 \
-	  go run ./cmd/server
+	  go run ./cmd/api
 
 web:
-	cd apps/web && npm install && npm run dev
+	cd frontend && npm install && npm run dev

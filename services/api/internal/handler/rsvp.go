@@ -7,31 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/bhune/utsav/services/api/internal/model"
 	rsvpservice "github.com/bhune/utsav/services/api/internal/service/rsvp"
 )
-
-type rsvpOTPRequest struct {
-	Phone string `json:"phone" binding:"required"`
-}
-
-type rsvpOTPVerify struct {
-	Phone string `json:"phone" binding:"required"`
-	Code  string `json:"code" binding:"required"`
-}
-
-type rsvpItem struct {
-	SubEventID           string `json:"sub_event_id" binding:"required"`
-	Status               string `json:"status" binding:"required"`
-	MealPref             string `json:"meal_pref"`
-	Dietary              string `json:"dietary"`
-	AccommodationNeeded  bool   `json:"accommodation_needed"`
-	TravelMode           string `json:"travel_mode"`
-	PlusOneNames         string `json:"plus_one_names"`
-}
-
-type rsvpSubmit struct {
-	Items []rsvpItem `json:"items" binding:"required"`
-}
 
 func (s *Server) eventIDFromSlug(c *gin.Context) (uuid.UUID, bool) {
 	if s.RSVPService == nil {
@@ -51,7 +29,7 @@ func (s *Server) postPublicRSVPOTPRequest(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var body rsvpOTPRequest
+	var body model.RSVPOTPRequest
 	if err := c.ShouldBindJSON(&body); err != nil {
 		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Phone is required.")
 		return
@@ -72,7 +50,7 @@ func (s *Server) postPublicRSVPOTPVerify(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var body rsvpOTPVerify
+	var body model.RSVPOTPVerify
 	if err := c.ShouldBindJSON(&body); err != nil {
 		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Phone and code are required.")
 		return
@@ -102,7 +80,7 @@ func (s *Server) postPublicRSVP(c *gin.Context) {
 		writeAPIError(c, http.StatusForbidden, "WRONG_EVENT", "Guest token does not match this event.")
 		return
 	}
-	var body rsvpSubmit
+	var body model.RSVPSubmit
 	if err := c.ShouldBindJSON(&body); err != nil {
 		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "RSVP payload is invalid.")
 		return

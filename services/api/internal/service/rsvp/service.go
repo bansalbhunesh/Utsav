@@ -9,10 +9,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/bhune/utsav/services/api/internal/auth"
-	"github.com/bhune/utsav/services/api/internal/otp"
-	phoneutil "github.com/bhune/utsav/services/api/internal/phone"
-	"github.com/bhune/utsav/services/api/internal/ratelimit"
+	"github.com/bhune/utsav/services/api/pkg/auth"
+	"github.com/bhune/utsav/services/api/pkg/otp"
+	phoneutil "github.com/bhune/utsav/services/api/pkg/phone"
+	"github.com/bhune/utsav/services/api/pkg/ratelimit"
 	"github.com/bhune/utsav/services/api/internal/repository/rsvprepo"
 )
 

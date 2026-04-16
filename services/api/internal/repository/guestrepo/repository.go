@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	phoneutil "github.com/bhune/utsav/services/api/internal/phone"
+	phoneutil "github.com/bhune/utsav/services/api/pkg/phone"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"

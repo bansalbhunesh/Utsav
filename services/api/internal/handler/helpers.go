@@ -15,10 +15,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/bhune/utsav/services/api/internal/auth"
-	"github.com/bhune/utsav/services/api/internal/cache"
+	"github.com/bhune/utsav/services/api/pkg/auth"
+	"github.com/bhune/utsav/services/api/pkg/cache"
 	"github.com/bhune/utsav/services/api/internal/config"
-	"github.com/bhune/utsav/services/api/internal/media"
+	"github.com/bhune/utsav/services/api/pkg/media"
 	authservice "github.com/bhune/utsav/services/api/internal/service/auth"
 	billingservice "github.com/bhune/utsav/services/api/internal/service/billing"
 	broadcastservice "github.com/bhune/utsav/services/api/internal/service/broadcast"

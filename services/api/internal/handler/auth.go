@@ -6,20 +6,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/bhune/utsav/services/api/internal/model"
 )
-
-type otpRequest struct {
-	Phone string `json:"phone" binding:"required"`
-}
-
-type otpVerify struct {
-	Phone string `json:"phone" binding:"required"`
-	Code  string `json:"code" binding:"required"`
-}
-
-type refreshBody struct {
-	RefreshToken string `json:"refresh_token"`
-}
 
 const (
 	accessTokenCookieName  = "utsav_access_token"
@@ -65,7 +53,7 @@ func (s *Server) clearAuthCookies(c *gin.Context) {
 }
 
 func (s *Server) postOTPRequest(c *gin.Context) {
-	var body otpRequest
+	var body model.OTPRequest
 	if err := c.ShouldBindJSON(&body); err != nil || s.AuthService == nil {
 		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Phone is required.")
 		return
@@ -82,7 +70,7 @@ func (s *Server) postOTPRequest(c *gin.Context) {
 }
 
 func (s *Server) postOTPVerify(c *gin.Context) {
-	var body otpVerify
+	var body model.OTPVerify
 	if err := c.ShouldBindJSON(&body); err != nil || s.AuthService == nil {
 		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Phone and code are required.")
 		return
@@ -101,7 +89,7 @@ func (s *Server) postOTPVerify(c *gin.Context) {
 }
 
 func (s *Server) postRefresh(c *gin.Context) {
-	var body refreshBody
+	var body model.RefreshBody
 	if s.AuthService == nil {
 		writeAPIError(c, http.StatusInternalServerError, "AUTH_SERVICE_UNAVAILABLE", "Auth service unavailable.")
 		return

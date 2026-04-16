@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -52,7 +54,16 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	port := getenv("HTTP_PORT", "8080")
+	// Load optional local env file for development.
+	// In production (Render) environment variables are injected by the platform.
+	if envRaw := strings.TrimSpace(os.Getenv("ENV")); envRaw == "" || !strings.EqualFold(envRaw, "production") {
+		_ = godotenv.Load(".env")
+	}
+
+	port := strings.TrimSpace(os.Getenv("PORT"))
+	if port == "" {
+		port = getenv("HTTP_PORT", "8080")
+	}
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		dsn = "postgres://utsav:utsav@localhost:5432/utsav?sslmode=disable"

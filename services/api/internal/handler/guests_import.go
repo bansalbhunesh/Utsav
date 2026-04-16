@@ -7,11 +7,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/bhune/utsav/services/api/internal/model"
 )
-
-type importGuestsBody struct {
-	CSV string `json:"csv" binding:"required"`
-}
 
 // postGuestsImport accepts CSV with header row optional. Columns: name, phone (required);
 // optional: email, relationship, side (matched by header name).
@@ -39,7 +36,7 @@ func (s *Server) postGuestsImport(c *gin.Context) {
 		defer file.Close()
 		src = file
 	} else {
-		var body importGuestsBody
+		var body model.GuestsImportBody
 		if err := c.ShouldBindJSON(&body); err != nil {
 			writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "CSV payload is required.")
 			return

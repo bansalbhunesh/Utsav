@@ -14,8 +14,8 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/bhune/utsav/services/api/internal/db"
-	"github.com/bhune/utsav/services/api/internal/migrate"
+	"github.com/bhune/utsav/services/api/pkg/db"
+	"github.com/bhune/utsav/services/api/pkg/migrate"
 )
 
 func TestMigrationsAgainstPostgresContainer(t *testing.T) {
