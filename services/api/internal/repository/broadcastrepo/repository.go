@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -76,20 +77,23 @@ func (r *PGRepository) List(ctx context.Context, eventID uuid.UUID) ([]Broadcast
 	return out, nil
 }
 
-func (r *PGRepository) Create(ctx context.Context, in CreateInput) error {
+type execer interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+func insertBroadcast(ctx context.Context, db execer, in CreateInput) error {
 	blob, _ := json.Marshal(in.Audience)
-	_, err := r.pool.Exec(ctx, `
+	_, err := db.Exec(ctx, `
 		INSERT INTO broadcasts (event_id, title, body, image_url, audience, announcement_type, created_by_user_id)
 		VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)`,
 		in.EventID, in.Title, in.Body, nullable(in.ImageURL), blob, in.Type, in.CreatedByUserID)
 	return err
 }
 
+func (r *PGRepository) Create(ctx context.Context, in CreateInput) error {
+	return insertBroadcast(ctx, r.pool, in)
+}
+
 func (r *PGRepository) CreateTx(ctx context.Context, tx pgx.Tx, in CreateInput) error {
-	blob, _ := json.Marshal(in.Audience)
-	_, err := tx.Exec(ctx, `
-		INSERT INTO broadcasts (event_id, title, body, image_url, audience, announcement_type, created_by_user_id)
-		VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)`,
-		in.EventID, in.Title, in.Body, nullable(in.ImageURL), blob, in.Type, in.CreatedByUserID)
-	return err
+	return insertBroadcast(ctx, tx, in)
 }

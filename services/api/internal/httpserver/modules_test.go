@@ -5,16 +5,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"testing"
+
+	billingservice "github.com/bhune/utsav/services/api/internal/service/billing"
 )
 
 func TestTierPricePaise(t *testing.T) {
-	if got := tierPricePaise("pro"); got != 99000 {
+	if got := billingservice.TierPricePaise("pro"); got != 99000 {
 		t.Fatalf("pro price mismatch: %d", got)
 	}
-	if got := tierPricePaise("elite"); got != 249000 {
+	if got := billingservice.TierPricePaise("elite"); got != 249000 {
 		t.Fatalf("elite price mismatch: %d", got)
 	}
-	if got := tierPricePaise("free"); got != 0 {
+	if got := billingservice.TierPricePaise("free"); got != 0 {
 		t.Fatalf("free price mismatch: %d", got)
 	}
 }
@@ -32,4 +34,3 @@ func TestVerifyRazorpayWebhookSignature(t *testing.T) {
 		t.Fatal("expected signature verification to fail")
 	}
 }
-

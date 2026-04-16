@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -42,7 +43,11 @@ func NewPGRepository(pool *pgxpool.Pool) *PGRepository {
 	return &PGRepository{pool: pool}
 }
 
-func (r *PGRepository) LogCashShagun(ctx context.Context, eventID uuid.UUID, input CashShagunInput) error {
+type execer interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+func insertCashShagun(ctx context.Context, db execer, eventID uuid.UUID, input CashShagunInput) error {
 	paise := int64(math.Round(input.AmountINR * 100))
 	var gid any
 	if input.GuestID != nil {
@@ -58,34 +63,19 @@ func (r *PGRepository) LogCashShagun(ctx context.Context, eventID uuid.UUID, inp
 	}
 	meta := map[string]any{"notes": input.Notes, "guest_phone": input.GuestPhone}
 	metaJSON, _ := json.Marshal(meta)
-	_, err := r.pool.Exec(ctx, `
+	_, err := db.Exec(ctx, `
 		INSERT INTO shagun_entries (event_id, guest_id, channel, amount_paise, status, sub_event_id, meta)
 		VALUES ($1,$2,'cash',$3,'host_verified',$4,$5::jsonb)`,
 		eventID, gid, paise, sid, string(metaJSON))
 	return err
 }
 
+func (r *PGRepository) LogCashShagun(ctx context.Context, eventID uuid.UUID, input CashShagunInput) error {
+	return insertCashShagun(ctx, r.pool, eventID, input)
+}
+
 func (r *PGRepository) LogCashShagunTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, input CashShagunInput) error {
-	paise := int64(math.Round(input.AmountINR * 100))
-	var gid any
-	if input.GuestID != nil {
-		if g, err := uuid.Parse(*input.GuestID); err == nil {
-			gid = g
-		}
-	}
-	var sid any
-	if input.SubEventID != nil {
-		if s2, err := uuid.Parse(*input.SubEventID); err == nil {
-			sid = s2
-		}
-	}
-	meta := map[string]any{"notes": input.Notes, "guest_phone": input.GuestPhone}
-	metaJSON, _ := json.Marshal(meta)
-	_, err := tx.Exec(ctx, `
-		INSERT INTO shagun_entries (event_id, guest_id, channel, amount_paise, status, sub_event_id, meta)
-		VALUES ($1,$2,'cash',$3,'host_verified',$4,$5::jsonb)`,
-		eventID, gid, paise, sid, string(metaJSON))
-	return err
+	return insertCashShagun(ctx, tx, eventID, input)
 }
 
 func (r *PGRepository) ListHostShagun(ctx context.Context, eventID uuid.UUID, limit, offset int) ([]HostShagunRow, error) {

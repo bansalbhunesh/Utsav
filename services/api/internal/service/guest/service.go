@@ -50,8 +50,16 @@ type ServiceError struct {
 
 func (e *ServiceError) Error() string { return e.Message }
 
+type repository interface {
+	ListGuests(ctx context.Context, p guestrepo.ListGuestsParams) ([]guestrepo.Guest, error)
+	UpsertGuest(ctx context.Context, eventID uuid.UUID, input guestrepo.GuestInput) (string, error)
+	UpsertGuestTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, input guestrepo.GuestInput) (string, error)
+	GuestIDByEventPhoneTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, phone string) (string, error)
+	ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, rawCSV string) (*guestrepo.ImportResult, error)
+}
+
 type Service struct {
-	repo  guestrepo.Repository
+	repo  repository
 	cache cache.Cache
 }
 
@@ -61,7 +69,7 @@ type RelationshipScoreOverview struct {
 	TierCounts             map[string]int    `json:"tier_counts"`
 }
 
-func NewService(repo guestrepo.Repository, c cache.Cache) *Service {
+func NewService(repo repository, c cache.Cache) *Service {
 	return &Service{repo: repo, cache: c}
 }
 
@@ -286,13 +294,21 @@ func (s *Service) InvalidateRelationshipOverview(ctx context.Context, eventID uu
 	_ = s.cache.Delete(ctx, cache.KeyRelationshipScoreOverview(eventID))
 }
 
-func (s *Service) UpsertGuest(ctx context.Context, eventID uuid.UUID, input guestrepo.GuestInput) (string, *ServiceError) {
+func normalizeGuestInput(input guestrepo.GuestInput) (guestrepo.GuestInput, *ServiceError) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.Phone = strings.TrimSpace(input.Phone)
 	if input.Name == "" || input.Phone == "" {
-		return "", &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Name and phone are required."}
+		return input, &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Name and phone are required."}
 	}
-	guestID, err := s.repo.UpsertGuest(ctx, eventID, input)
+	return input, nil
+}
+
+func (s *Service) UpsertGuest(ctx context.Context, eventID uuid.UUID, input guestrepo.GuestInput) (string, *ServiceError) {
+	normalized, svcErr := normalizeGuestInput(input)
+	if svcErr != nil {
+		return "", svcErr
+	}
+	guestID, err := s.repo.UpsertGuest(ctx, eventID, normalized)
 	if err != nil {
 		return "", &ServiceError{Status: http.StatusBadRequest, Code: "UPSERT_FAILED", Message: "Unable to save guest."}
 	}
@@ -302,12 +318,11 @@ func (s *Service) UpsertGuest(ctx context.Context, eventID uuid.UUID, input gues
 
 // UpsertGuestTx is the same as UpsertGuest but runs on an existing transaction (caller commits).
 func (s *Service) UpsertGuestTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, input guestrepo.GuestInput) (string, *ServiceError) {
-	input.Name = strings.TrimSpace(input.Name)
-	input.Phone = strings.TrimSpace(input.Phone)
-	if input.Name == "" || input.Phone == "" {
-		return "", &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Name and phone are required."}
+	normalized, svcErr := normalizeGuestInput(input)
+	if svcErr != nil {
+		return "", svcErr
 	}
-	guestID, err := s.repo.UpsertGuestTx(ctx, tx, eventID, input)
+	guestID, err := s.repo.UpsertGuestTx(ctx, tx, eventID, normalized)
 	if err != nil {
 		return "", &ServiceError{Status: http.StatusBadRequest, Code: "UPSERT_FAILED", Message: "Unable to save guest."}
 	}

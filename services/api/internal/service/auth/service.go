@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -48,8 +47,23 @@ type MeResult struct {
 	DisplayName string
 }
 
+type repository interface {
+	DeletePhoneOTPChallenges(ctx context.Context, phone string) error
+	InsertPhoneOTPChallenge(ctx context.Context, phone, codeHash string) error
+	GetLatestPhoneOTPChallenge(ctx context.Context, phone string) (*authrepo.OTPChallenge, error)
+	IncrementPhoneOTPAttempts(ctx context.Context, id uuid.UUID) error
+	DeletePhoneOTPChallengeByID(ctx context.Context, id uuid.UUID) error
+	FindUserIDByPhone(ctx context.Context, phone string) (uuid.UUID, error)
+	CreateUserWithPhone(ctx context.Context, phone string) (uuid.UUID, error)
+	InsertRefreshTokenHash(ctx context.Context, userID uuid.UUID, tokenHash string) error
+	PruneRefreshTokensForUser(ctx context.Context, userID uuid.UUID, maxKeep int) error
+	RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string, beforeCommit func(userID uuid.UUID) error) error
+	RevokeRefreshTokenHash(ctx context.Context, tokenHash string) error
+	GetUserProfileByID(ctx context.Context, userID uuid.UUID) (string, string, error)
+}
+
 type Service struct {
-	repo              authrepo.Repository
+	repo              repository
 	otpRequestLimiter ratelimit.Limiter
 	otpVerifyLimiter  ratelimit.Limiter
 	devOTP            string
@@ -63,7 +77,7 @@ type Service struct {
 var phoneE164Regex = regexp.MustCompile(`^\+?[1-9]\d{7,14}$`)
 
 func NewService(
-	repo authrepo.Repository,
+	repo repository,
 	otpRequestLimiter ratelimit.Limiter,
 	otpVerifyLimiter ratelimit.Limiter,
 	devOTPCode string,
@@ -84,18 +98,6 @@ func NewService(
 		otpDispatcher:     otpDispatcher,
 		otpMaxAttempts:    otpMaxAttempts,
 	}
-}
-
-func generateNumericOTP() (string, error) {
-	raw := make([]byte, 4)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	n := int(raw[0])<<24 | int(raw[1])<<16 | int(raw[2])<<8 | int(raw[3])
-	if n < 0 {
-		n = -n
-	}
-	return fmt.Sprintf("%06d", n%1000000), nil
 }
 
 func (s *Service) RequestOTP(ctx context.Context, phone, clientIP string) *ServiceError {
@@ -126,7 +128,7 @@ func (s *Service) RequestOTP(ctx context.Context, phone, clientIP string) *Servi
 	code := s.devOTP
 	if code == "" {
 		var err error
-		code, err = generateNumericOTP()
+		code, err = otp.GenerateNumericCode()
 		if err != nil {
 			return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_GENERATE_FAILED", Message: "Unable to generate OTP code."}
 		}

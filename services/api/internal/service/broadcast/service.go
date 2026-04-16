@@ -31,27 +31,34 @@ func (s *Service) List(ctx context.Context, eventID uuid.UUID) ([]broadcastrepo.
 	return out, nil
 }
 
-func (s *Service) Create(ctx context.Context, in broadcastrepo.CreateInput) *ServiceError {
+func normalizeBroadcastInput(in broadcastrepo.CreateInput) (broadcastrepo.CreateInput, *ServiceError) {
 	if strings.TrimSpace(in.Title) == "" || strings.TrimSpace(in.Body) == "" {
-		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Broadcast title and body are required."}
+		return in, &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Broadcast title and body are required."}
 	}
 	if strings.TrimSpace(in.Type) == "" {
 		in.Type = "general"
 	}
-	if err := s.repo.Create(ctx, in); err != nil {
-		return &ServiceError{Status: http.StatusBadRequest, Code: "INSERT_FAILED", Message: "Failed to create broadcast."}
-	}
-	return nil
+	return in, nil
+}
+
+func (s *Service) Create(ctx context.Context, in broadcastrepo.CreateInput) *ServiceError {
+	return s.createWithExecutor(in, func(normalized broadcastrepo.CreateInput) error {
+		return s.repo.Create(ctx, normalized)
+	})
 }
 
 func (s *Service) CreateTx(ctx context.Context, tx pgx.Tx, in broadcastrepo.CreateInput) *ServiceError {
-	if strings.TrimSpace(in.Title) == "" || strings.TrimSpace(in.Body) == "" {
-		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Broadcast title and body are required."}
+	return s.createWithExecutor(in, func(normalized broadcastrepo.CreateInput) error {
+		return s.repo.CreateTx(ctx, tx, normalized)
+	})
+}
+
+func (s *Service) createWithExecutor(in broadcastrepo.CreateInput, createFn func(in broadcastrepo.CreateInput) error) *ServiceError {
+	normalized, svcErr := normalizeBroadcastInput(in)
+	if svcErr != nil {
+		return svcErr
 	}
-	if strings.TrimSpace(in.Type) == "" {
-		in.Type = "general"
-	}
-	if err := s.repo.CreateTx(ctx, tx, in); err != nil {
+	if err := createFn(normalized); err != nil {
 		return &ServiceError{Status: http.StatusBadRequest, Code: "INSERT_FAILED", Message: "Failed to create broadcast."}
 	}
 	return nil

@@ -503,10 +503,6 @@ type billingCheckoutBody struct {
 	EventID string `json:"event_id"`
 }
 
-func tierPricePaise(tier string) int64 {
-	return billingservice.TierPricePaise(tier)
-}
-
 func (s *Server) postBillingCheckout(c *gin.Context) {
 	uid, ok := s.requireUser(c)
 	if !ok {

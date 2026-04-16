@@ -2,9 +2,7 @@ package rsvpservice
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
-	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -77,18 +75,6 @@ func NewService(
 	}
 }
 
-func generateNumericOTP() (string, error) {
-	raw := make([]byte, 4)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	n := int(raw[0])<<24 | int(raw[1])<<16 | int(raw[2])<<8 | int(raw[3])
-	if n < 0 {
-		n = -n
-	}
-	return fmt.Sprintf("%06d", n%1000000), nil
-}
-
 func (s *Service) EventIDFromSlug(ctx context.Context, slug string) (uuid.UUID, *ServiceError) {
 	clean := strings.TrimSpace(strings.ToLower(slug))
 	eid, err := s.repo.FindEventIDBySlug(ctx, clean)
@@ -124,7 +110,7 @@ func (s *Service) RequestOTP(ctx context.Context, eventID uuid.UUID, slug, phone
 	code := s.devOTP
 	if code == "" {
 		var err error
-		code, err = generateNumericOTP()
+		code, err = otp.GenerateNumericCode()
 		if err != nil {
 			return &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_GENERATE_FAILED", Message: "Unable to generate RSVP OTP."}
 		}
