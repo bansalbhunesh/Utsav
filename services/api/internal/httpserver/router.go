@@ -7,7 +7,9 @@ import (
 
 func (s *Server) Mount(r *gin.Engine) {
 	r.GET("/health", s.healthz)
-	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	if s.Config == nil || s.Config.PublicMetrics {
+		r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	}
 	v1 := r.Group("/v1")
 	v1.GET("/healthz", s.healthz)
 	v1.GET("/readyz", s.readyz)

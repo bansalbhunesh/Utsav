@@ -73,6 +73,7 @@ func writeAPIError(c *gin.Context, status int, code string, message string) {
 
 type Server struct {
 	Pool         *pgxpool.Pool
+	ReadPool     *pgxpool.Pool // replica pool for read paths; equals Pool when DATABASE_READ_URL unset
 	Config       *config.Config
 	MediaSigner  media.Signer
 	AuthService  *authservice.Service

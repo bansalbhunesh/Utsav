@@ -2,6 +2,7 @@ package rsvprepo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +10,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// ErrIdempotencyConflict is returned when the same idempotency key was used with a different request body.
+var ErrIdempotencyConflict = errors.New("rsvprepo: idempotency fingerprint mismatch")
+
+// ErrInvalidSubEvents is returned when one or more sub_event ids are not part of the event.
+var ErrInvalidSubEvents = errors.New("rsvprepo: sub-events not part of event")
 
 type OTPChallenge struct {
 	ID        uuid.UUID
@@ -48,6 +55,7 @@ type Repository interface {
 	IncrementRSVPOTPAttempts(ctx context.Context, id uuid.UUID) error
 	DeleteRSVPOTPChallengeByID(ctx context.Context, id uuid.UUID) error
 	UpsertRSVPResponses(ctx context.Context, eventID uuid.UUID, phone string, items []RSVPItem) error
+	UpsertRSVPResponsesIdempotent(ctx context.Context, scope, idempotencyKey, fingerprint string, eventID uuid.UUID, phone string, items []RSVPItem) error
 	ListHostRSVPs(ctx context.Context, eventID uuid.UUID, limit, offset int) ([]HostRSVPRow, error)
 }
 
@@ -99,6 +107,57 @@ func (r *PGRepository) IncrementRSVPOTPAttempts(ctx context.Context, id uuid.UUI
 	return err
 }
 
+const upsertRSVPResponseSQL = `
+		INSERT INTO rsvp_responses (
+			event_id, guest_phone, sub_event_id, status, meal_pref, dietary, accommodation_needed, travel_mode, plus_one_names
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT (event_id, guest_phone, sub_event_id) DO UPDATE SET
+			status=EXCLUDED.status, meal_pref=EXCLUDED.meal_pref, dietary=EXCLUDED.dietary,
+			accommodation_needed=EXCLUDED.accommodation_needed, travel_mode=EXCLUDED.travel_mode,
+			plus_one_names=EXCLUDED.plus_one_names, updated_at=now()`
+
+func upsertRSVPBatchTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, phone string, items []RSVPItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for _, it := range items {
+		batch.Queue(upsertRSVPResponseSQL, eventID, phone, it.SubEventID, it.Status, it.MealPref, it.Dietary, it.AccommodationNeeded, it.TravelMode, it.PlusOneNames)
+	}
+	br := tx.SendBatch(ctx, batch)
+	defer br.Close()
+	for range items {
+		if _, err := br.Exec(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func dedupeSubEventIDs(items []RSVPItem) []uuid.UUID {
+	seen := make(map[uuid.UUID]struct{}, len(items))
+	out := make([]uuid.UUID, 0, len(items))
+	for _, it := range items {
+		if _, ok := seen[it.SubEventID]; ok {
+			continue
+		}
+		seen[it.SubEventID] = struct{}{}
+		out = append(out, it.SubEventID)
+	}
+	return out
+}
+
+func countSubEventsForEventTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, subEventIDs []uuid.UUID) (int, error) {
+	if len(subEventIDs) == 0 {
+		return 0, nil
+	}
+	var n int
+	err := tx.QueryRow(ctx, `
+		SELECT COUNT(*)::int FROM sub_events
+		WHERE event_id=$1 AND id = ANY($2::uuid[])`, eventID, subEventIDs).Scan(&n)
+	return n, err
+}
+
 func (r *PGRepository) UpsertRSVPResponses(ctx context.Context, eventID uuid.UUID, phone string, items []RSVPItem) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -109,25 +168,65 @@ func (r *PGRepository) UpsertRSVPResponses(ctx context.Context, eventID uuid.UUI
 	if len(items) == 0 {
 		return tx.Commit(ctx)
 	}
-
-	const q = `
-		INSERT INTO rsvp_responses (
-			event_id, guest_phone, sub_event_id, status, meal_pref, dietary, accommodation_needed, travel_mode, plus_one_names
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		ON CONFLICT (event_id, guest_phone, sub_event_id) DO UPDATE SET
-			status=EXCLUDED.status, meal_pref=EXCLUDED.meal_pref, dietary=EXCLUDED.dietary,
-			accommodation_needed=EXCLUDED.accommodation_needed, travel_mode=EXCLUDED.travel_mode,
-			plus_one_names=EXCLUDED.plus_one_names, updated_at=now()`
-	batch := &pgx.Batch{}
-	for _, it := range items {
-		batch.Queue(q, eventID, phone, it.SubEventID, it.Status, it.MealPref, it.Dietary, it.AccommodationNeeded, it.TravelMode, it.PlusOneNames)
+	if err := upsertRSVPBatchTx(ctx, tx, eventID, phone, items); err != nil {
+		return err
 	}
-	br := tx.SendBatch(ctx, batch)
-	defer br.Close()
-	for range items {
-		if _, err := br.Exec(); err != nil {
+	return tx.Commit(ctx)
+}
+
+// UpsertRSVPResponsesIdempotent reserves the idempotency key and applies RSVP upserts in a single transaction.
+// If the key already exists with the same fingerprint, it commits without re-writing RSVP rows (replay).
+func (r *PGRepository) UpsertRSVPResponsesIdempotent(ctx context.Context, scope, idempotencyKey, fingerprint string, eventID uuid.UUID, phone string, items []RSVPItem) error {
+	if len(items) == 0 {
+		return fmt.Errorf("empty rsvp items")
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM idempotency_keys WHERE scope=$1 AND key=$2 AND expires_at < now()
+	`, scope, idempotencyKey); err != nil {
+		return err
+	}
+
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO idempotency_keys (scope, key, fingerprint, expires_at)
+		VALUES ($1, $2, $3, now() + interval '24 hours')
+		ON CONFLICT (scope, key) DO NOTHING
+	`, scope, idempotencyKey, fingerprint)
+	if err != nil {
+		return err
+	}
+
+	if tag.RowsAffected() == 0 {
+		var existing string
+		err = tx.QueryRow(ctx, `
+			SELECT fingerprint FROM idempotency_keys
+			WHERE scope=$1 AND key=$2 AND expires_at > now()
+			FOR UPDATE
+		`, scope, idempotencyKey).Scan(&existing)
+		if err != nil {
 			return err
 		}
+		if existing != fingerprint {
+			return ErrIdempotencyConflict
+		}
+		return tx.Commit(ctx)
+	}
+
+	uniq := dedupeSubEventIDs(items)
+	n, err := countSubEventsForEventTx(ctx, tx, eventID, uniq)
+	if err != nil {
+		return err
+	}
+	if n != len(uniq) {
+		return ErrInvalidSubEvents
+	}
+	if err := upsertRSVPBatchTx(ctx, tx, eventID, phone, items); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

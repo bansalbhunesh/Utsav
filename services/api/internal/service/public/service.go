@@ -44,19 +44,21 @@ func (s *Service) InvalidatePublicEventCache(ctx context.Context, eventID uuid.U
 	if s.cache == nil {
 		return
 	}
+	// Slug from primary (see publicrepo.GetSlugByEventID) so we delete the correct public:* keys after renames.
 	slug, err := s.repo.GetSlugByEventID(ctx, eventID)
-	if err != nil || strings.TrimSpace(slug) == "" {
-		return
+	if err == nil && strings.TrimSpace(slug) != "" {
+		ns := normalizeSlug(slug)
+		if err := s.cache.Delete(ctx,
+			"public:event:"+ns,
+			"public:schedule:"+ns,
+			"public:broadcasts:"+ns,
+			"public:gallery:"+ns,
+		); err != nil {
+			log.Printf("public cache delete: %v", err)
+		}
 	}
-	ns := normalizeSlug(slug)
-	if err := s.cache.Delete(ctx,
-		"public:event:"+ns,
-		"public:schedule:"+ns,
-		"public:broadcasts:"+ns,
-		"public:gallery:"+ns,
-	); err != nil {
-		log.Printf("public cache delete: %v", err)
-	}
+	_ = s.cache.Delete(ctx, cache.KeyRelationshipScoreOverview(eventID))
+	cache.InvalidateGuestListForEvent(ctx, s.cache, eventID)
 }
 
 func (s *Service) GetEvent(ctx context.Context, slug string) (map[string]any, uuid.UUID, *ServiceError) {
@@ -275,6 +277,22 @@ func (s *Service) ReportShagun(ctx context.Context, slug string, guestEventID uu
 	paise := int64(math.Round(amountINR * 100))
 	if paise <= 0 {
 		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_AMOUNT", Message: "Shagun amount must be greater than zero."}
+	}
+	if subEventID != nil {
+		raw := strings.TrimSpace(*subEventID)
+		if raw != "" {
+			sid, parseErr := uuid.Parse(raw)
+			if parseErr != nil {
+				return &ServiceError{Status: http.StatusBadRequest, Code: "BAD_SUB_EVENT", Message: "Sub-event id is invalid."}
+			}
+			ok, err := s.repo.SubEventBelongsToEvent(ctx, eid, sid)
+			if err != nil {
+				return &ServiceError{Status: http.StatusInternalServerError, Code: "SUB_EVENT_VALIDATE_FAILED", Message: "Unable to validate sub-event."}
+			}
+			if !ok {
+				return &ServiceError{Status: http.StatusBadRequest, Code: "BAD_SUB_EVENT", Message: "Sub-event is not part of this event."}
+			}
+		}
 	}
 	if err := s.repo.InsertGuestShagunReport(ctx, publicrepo.GuestShagunReportInput{
 		EventID:      eid,

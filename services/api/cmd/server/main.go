@@ -76,11 +76,33 @@ func main() {
 	}
 	ctx := context.Background()
 	isProd := strings.EqualFold(strings.TrimSpace(cfg.Env), "production")
-	pool, err := db.Connect(ctx, cfg.DatabaseURL, !isProd)
+	pool, err := db.Connect(ctx, db.PoolConfig{
+		DatabaseURL:           cfg.DatabaseURL,
+		PingConnBeforeAcquire: !isProd,
+		MaxConns:              int32(cfg.DBMaxConns),
+		MinConns:              int32(cfg.DBMinConns),
+		StatementTimeoutMs:    cfg.DBStatementTimeoutMs,
+	})
 	if err != nil {
 		log.Fatalf("db: %v", err)
 	}
 	defer pool.Close()
+
+	readPool := pool
+	if strings.TrimSpace(cfg.DatabaseReadURL) != "" {
+		rp, rerr := db.Connect(ctx, db.PoolConfig{
+			DatabaseURL:           cfg.DatabaseReadURL,
+			PingConnBeforeAcquire: !isProd,
+			MaxConns:              int32(cfg.DBMaxConns),
+			MinConns:              int32(cfg.DBMinConns),
+			StatementTimeoutMs:    cfg.DBStatementTimeoutMs,
+		})
+		if rerr != nil {
+			log.Fatalf("db read replica: %v", rerr)
+		}
+		readPool = rp
+		defer rp.Close()
+	}
 
 	if cfg.RunMigrations {
 		if err := migrate.Up(cfg.DatabaseURL, cfg.MigrationsPath); err != nil {
@@ -121,6 +143,7 @@ func main() {
 
 	srv := &httpserver.Server{
 		Pool:        pool,
+		ReadPool:    readPool,
 		Config:      cfg,
 		MediaSigner: media.URLSigner{BaseURL: cfg.ObjectStorePublicBaseURL},
 	}
@@ -190,7 +213,7 @@ func main() {
 			publicCache = redisCache
 		}
 	}
-	srv.PublicService = publicservice.NewService(publicrepo.NewPGRepository(pool), srv.MediaSigner, publicCache)
+	srv.PublicService = publicservice.NewService(publicrepo.NewPGRepository(pool, readPool), srv.MediaSigner, publicCache)
 	srv.RSVPService = rsvpservice.NewService(
 		rsvprepo.NewPGRepository(pool),
 		newLimiter(cfg.RSVPOTPRequestLimit),
@@ -203,7 +226,7 @@ func main() {
 		otpDispatcher,
 		cfg.OTPMaxAttempts,
 	)
-	srv.GuestService = guestservice.NewService(guestrepo.NewPGRepository(pool), publicCache)
+	srv.GuestService = guestservice.NewService(guestrepo.NewPGRepository(pool, readPool), publicCache)
 	srv.ShagunService = shagunservice.NewService(shagunrepo.NewPGRepository(pool))
 	srv.VendorService = vendorservice.NewService(vendorrepo.NewPGRepository(pool))
 	srv.Mount(r)

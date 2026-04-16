@@ -204,6 +204,7 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code, clientIP string) (
 	if err := s.repo.InsertRefreshTokenHash(ctx, userID, hex.EncodeToString(sum[:])); err != nil {
 		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "REFRESH_PERSIST_FAILED", Message: "Unable to persist refresh token."}
 	}
+	_ = s.repo.PruneRefreshTokensForUser(ctx, userID, 10)
 
 	return &OTPVerifyResult{
 		AccessToken:  access,
@@ -239,6 +240,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*RefreshRes
 	if err := s.repo.InsertRefreshTokenHash(ctx, userID, hex.EncodeToString(sum2[:])); err != nil {
 		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "REFRESH_PERSIST_FAILED", Message: "Unable to persist refresh token."}
 	}
+	_ = s.repo.PruneRefreshTokensForUser(ctx, userID, 10)
 
 	return &RefreshResult{
 		AccessToken:  access,

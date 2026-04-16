@@ -590,7 +590,16 @@ func hexString(s string) ([]byte, error) {
 }
 
 func (s *Server) postRazorpayWebhook(c *gin.Context) {
-	payload, err := io.ReadAll(c.Request.Body)
+	const maxWebhookBody = 512 << 10
+	payload, err := io.ReadAll(io.LimitReader(c.Request.Body, maxWebhookBody+1))
+	if err != nil {
+		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Webhook payload is invalid.")
+		return
+	}
+	if len(payload) > maxWebhookBody {
+		writeAPIError(c, http.StatusRequestEntityTooLarge, "BODY_TOO_LARGE", "Webhook payload is too large.")
+		return
+	}
 	if err != nil {
 		writeAPIError(c, http.StatusBadRequest, "INVALID_BODY", "Webhook payload is invalid.")
 		return

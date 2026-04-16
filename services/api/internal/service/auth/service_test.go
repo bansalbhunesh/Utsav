@@ -24,6 +24,7 @@ func (m *mockAuthRepo) DeletePhoneOTPChallengeByID(context.Context, uuid.UUID) e
 func (m *mockAuthRepo) FindUserIDByPhone(context.Context, string) (uuid.UUID, error) { return uuid.Nil, nil }
 func (m *mockAuthRepo) CreateUserWithPhone(context.Context, string) (uuid.UUID, error) { return uuid.Nil, nil }
 func (m *mockAuthRepo) InsertRefreshTokenHash(context.Context, uuid.UUID, string) error { return nil }
+func (m *mockAuthRepo) PruneRefreshTokensForUser(context.Context, uuid.UUID, int) error { return nil }
 func (m *mockAuthRepo) ConsumeRefreshTokenHash(context.Context, string) (uuid.UUID, error) { return uuid.Nil, nil }
 func (m *mockAuthRepo) RevokeRefreshTokenHash(context.Context, string) error { return nil }
 func (m *mockAuthRepo) GetUserProfileByID(ctx context.Context, userID uuid.UUID) (string, string, error) {

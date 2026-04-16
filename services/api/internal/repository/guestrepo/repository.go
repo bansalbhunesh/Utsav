@@ -67,11 +67,16 @@ type Repository interface {
 }
 
 type PGRepository struct {
-	pool *pgxpool.Pool
+	write *pgxpool.Pool
+	read  *pgxpool.Pool
 }
 
-func NewPGRepository(pool *pgxpool.Pool) *PGRepository {
-	return &PGRepository{pool: pool}
+// NewPGRepository creates a repository. read may be a replica for ListGuests; if nil, write is used for reads.
+func NewPGRepository(write, read *pgxpool.Pool) *PGRepository {
+	if read == nil {
+		read = write
+	}
+	return &PGRepository{write: write, read: read}
 }
 
 func normalizeGuestListSort(sort string) string {
@@ -88,8 +93,9 @@ func (r *PGRepository) ListGuests(ctx context.Context, p ListGuestsParams) ([]Gu
 	if limit <= 0 {
 		limit = 50
 	}
-	if limit > 10000 {
-		limit = 10000
+	// Align with API max page size (httpserver parseLimitOffset caps at 200).
+	if limit > 200 {
+		limit = 200
 	}
 	offset := p.Offset
 	if offset < 0 {
@@ -187,7 +193,8 @@ func (r *PGRepository) ListGuests(ctx context.Context, p ListGuestsParams) ([]Gu
 		limitOffsetSQL = fmt.Sprintf(`LIMIT $%d OFFSET $%d`, limitPos, offPos)
 	}
 
-	rows, err := r.pool.Query(ctx, `
+	// Primary: organiser guest list must not read stale rows behind a replica.
+	rows, err := r.write.Query(ctx, `
 		WITH guest_enriched AS (
 			SELECT
 				g.id, g.name, g.phone, g.email, g.relationship, g.side, g.tags, g.group_id,
@@ -300,7 +307,7 @@ func (r *PGRepository) UpsertGuest(ctx context.Context, eventID uuid.UUID, input
 		tags = input.Tags
 	}
 	var guestID string
-	err := r.pool.QueryRow(ctx, `
+	err := r.write.QueryRow(ctx, `
 		INSERT INTO guests (event_id, group_id, name, phone, email, relationship, side, tags)
 		VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),$8::text[])
 		ON CONFLICT (event_id, phone) DO UPDATE SET name=EXCLUDED.name, email=EXCLUDED.email,
@@ -420,7 +427,7 @@ func (r *PGRepository) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, r
 		return result, nil
 	}
 
-	tx, err := r.pool.Begin(ctx)
+	tx, err := r.write.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}

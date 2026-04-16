@@ -3,6 +3,7 @@ package rsvpservice
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -188,7 +189,10 @@ func (s *Service) VerifyOTP(ctx context.Context, eventID uuid.UUID, phone, code,
 	return tok, nil
 }
 
-func (s *Service) SubmitRSVP(ctx context.Context, eventID, guestEventID uuid.UUID, phone, clientIP string, items []SubmitItemInput) *ServiceError {
+func (s *Service) SubmitRSVP(ctx context.Context, eventID, guestEventID uuid.UUID, phone, clientIP, idempotencyKey, fingerprint string, items []SubmitItemInput) *ServiceError {
+	if strings.TrimSpace(idempotencyKey) == "" {
+		return &ServiceError{Status: http.StatusBadRequest, Code: "MISSING_IDEMPOTENCY_KEY", Message: "Idempotency-Key header is required."}
+	}
 	if s.submitLimiter != nil {
 		allowed, err := s.submitLimiter.Allow(ctx, "public_rsvp_submit:"+eventID.String()+"|"+clientIP+"|"+phone)
 		if err != nil {
@@ -231,8 +235,15 @@ func (s *Service) SubmitRSVP(ctx context.Context, eventID, guestEventID uuid.UUI
 		})
 	}
 
-	if err := s.repo.UpsertRSVPResponses(ctx, eventID, phone, mapped); err != nil {
-		return &ServiceError{Status: http.StatusBadRequest, Code: "RSVP_UPSERT_FAILED", Message: "Unable to save RSVP response."}
+	if err := s.repo.UpsertRSVPResponsesIdempotent(ctx, "public_rsvp_submit", idempotencyKey, fingerprint, eventID, phone, mapped); err != nil {
+		switch {
+		case errors.Is(err, rsvprepo.ErrIdempotencyConflict):
+			return &ServiceError{Status: http.StatusConflict, Code: "IDEMPOTENCY_CONFLICT", Message: "Idempotency key was already used for a different request."}
+		case errors.Is(err, rsvprepo.ErrInvalidSubEvents):
+			return &ServiceError{Status: http.StatusBadRequest, Code: "BAD_SUB_EVENT", Message: "One or more sub-events are not part of this event."}
+		default:
+			return &ServiceError{Status: http.StatusBadRequest, Code: "RSVP_UPSERT_FAILED", Message: "Unable to save RSVP response."}
+		}
 	}
 	return nil
 }

@@ -118,15 +118,6 @@ func (s *Server) postPublicRSVP(c *gin.Context) {
 	}
 	rawItems, _ := json.Marshal(body.Items)
 	fingerprint := hashFingerprint(eidSlug.String(), phone, string(rawItems))
-	ok, err := s.reserveIdempotencyKey(c.Request.Context(), "public_rsvp_submit", idempotencyKey, fingerprint)
-	if err != nil {
-		writeAPIError(c, http.StatusInternalServerError, "IDEMPOTENCY_FAILED", "Unable to validate idempotency key.")
-		return
-	}
-	if !ok {
-		writeAPIError(c, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used for a different request.")
-		return
-	}
 
 	inputs := make([]rsvpservice.SubmitItemInput, 0, len(body.Items))
 	for _, it := range body.Items {
@@ -140,7 +131,7 @@ func (s *Server) postPublicRSVP(c *gin.Context) {
 			PlusOneNames:        it.PlusOneNames,
 		})
 	}
-	if svcErr := s.RSVPService.SubmitRSVP(c.Request.Context(), eidSlug, geid, phone, c.ClientIP(), inputs); svcErr != nil {
+	if svcErr := s.RSVPService.SubmitRSVP(c.Request.Context(), eidSlug, geid, phone, c.ClientIP(), idempotencyKey, fingerprint, inputs); svcErr != nil {
 		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
 		return
 	}

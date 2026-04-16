@@ -45,3 +45,29 @@ func (r *RedisCache) Delete(ctx context.Context, keys ...string) error {
 	}
 	return r.client.Del(ctx, keys...).Err()
 }
+
+// DeleteKeysWithPrefix removes keys matching prefix* (SCAN + batched DEL).
+func (r *RedisCache) DeleteKeysWithPrefix(ctx context.Context, prefix string) error {
+	if r == nil || r.client == nil || prefix == "" {
+		return nil
+	}
+	const batch = 500
+	iter := r.client.Scan(ctx, 0, prefix+"*", 0).Iterator()
+	var keys []string
+	for iter.Next(ctx) {
+		keys = append(keys, iter.Val())
+		if len(keys) >= batch {
+			if err := r.client.Del(ctx, keys...).Err(); err != nil {
+				return err
+			}
+			keys = keys[:0]
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return err
+	}
+	if len(keys) > 0 {
+		return r.client.Del(ctx, keys...).Err()
+	}
+	return nil
+}

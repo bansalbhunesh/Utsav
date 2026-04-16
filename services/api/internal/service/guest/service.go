@@ -2,10 +2,12 @@ package guestservice
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
-	sortutil "sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,11 +17,29 @@ import (
 	"github.com/bhune/utsav/services/api/internal/repository/guestrepo"
 )
 
-// guestListPrefetchMax caps how many guests we load when ordering or filtering must match
-// SQL-computed priority (tier filter, or priority sort — OFFSET must apply after ordering).
-const guestListPrefetchMax = 10000
+// relationshipOverviewCacheTTL matches guest list page TTL so dashboards stay consistent.
+const relationshipOverviewCacheTTL = 45 * time.Second
 
-const relationshipOverviewCacheTTL = 5 * time.Minute
+// guestListPageCacheTTL bounds staleness for organiser guest list pages (cache-aside).
+const guestListPageCacheTTL = 45 * time.Second
+
+type guestListPageCached struct {
+	Guests []guestrepo.Guest `json:"guests"`
+	Next   *string           `json:"next,omitempty"`
+}
+
+func guestListPageCacheKey(eventID uuid.UUID, sortNorm, tier string, limit, offset int, cursorStr *string) string {
+	cTag := "-"
+	if cursorStr != nil && strings.TrimSpace(*cursorStr) != "" {
+		sum := sha256.Sum256([]byte(strings.TrimSpace(*cursorStr)))
+		cTag = hex.EncodeToString(sum[:10])
+	}
+	tierK := tier
+	if tierK == "" {
+		tierK = "-"
+	}
+	return "guestlist:" + eventID.String() + ":" + sortNorm + ":" + tierK + ":" + strconv.Itoa(limit) + ":" + strconv.Itoa(offset) + ":" + cTag
+}
 
 type ServiceError struct {
 	Status  int
@@ -44,10 +64,6 @@ func NewService(repo guestrepo.Repository, c cache.Cache) *Service {
 	return &Service{repo: repo, cache: c}
 }
 
-func relationshipOverviewCacheKey(eventID uuid.UUID) string {
-	return "rel_score_overview:" + eventID.String()
-}
-
 func tierLabelFromScore(score int) string {
 	switch {
 	case score >= 80:
@@ -66,32 +82,6 @@ func applyGuestPriorityFromSQL(list []guestrepo.Guest) {
 	}
 }
 
-func sortGuestsByPriority(list []guestrepo.Guest, sort string) {
-	sortutil.SliceStable(list, func(i, j int) bool {
-		if sort == "priority_asc" {
-			if list[i].PriorityScore == list[j].PriorityScore {
-				return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name)
-			}
-			return list[i].PriorityScore < list[j].PriorityScore
-		}
-		if list[i].PriorityScore == list[j].PriorityScore {
-			return strings.ToLower(list[i].Name) < strings.ToLower(list[j].Name)
-		}
-		return list[i].PriorityScore > list[j].PriorityScore
-	})
-}
-
-func paginateGuests(list []guestrepo.Guest, offset, limit int) []guestrepo.Guest {
-	if offset >= len(list) {
-		return []guestrepo.Guest{}
-	}
-	end := offset + limit
-	if end > len(list) {
-		end = len(list)
-	}
-	return list[offset:end]
-}
-
 func normalizeListSort(sort string) string {
 	switch strings.ToLower(strings.TrimSpace(sort)) {
 	case "name_desc", "priority_asc", "priority_desc", "rsvp_desc", "shagun_desc":
@@ -101,7 +91,8 @@ func normalizeListSort(sort string) string {
 	}
 }
 
-// ListGuests returns guests and an opaque next_cursor when another page exists (keyset path only).
+// ListGuests returns guests and an opaque next_cursor when another page exists.
+// Priority sorts use SQL ORDER BY + LIMIT/OFFSET or keyset (cursor); no full-table prefetch.
 func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offset int, sort, priorityTier string, cursorStr *string) ([]guestrepo.Guest, *string, *ServiceError) {
 	tierFilter := strings.ToLower(strings.TrimSpace(priorityTier))
 	switch tierFilter {
@@ -125,10 +116,21 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 	}
 
 	if tierFilter != "" {
-		fetch := limit + 1
-		if fetch > 10000 {
-			fetch = 10000
+		// SQL ignores OFFSET when cursor is set; align cache key so the same page does not fragment across keys.
+		offKey := offset
+		if decoded != nil {
+			offKey = 0
 		}
+		cacheKey := guestListPageCacheKey(eventID, sortNorm, tierFilter, limit, offKey, cursorStr)
+		if s.cache != nil {
+			if raw, err := s.cache.Get(ctx, cacheKey); err == nil {
+				var p guestListPageCached
+				if json.Unmarshal(raw, &p) == nil {
+					return p.Guests, p.Next, nil
+				}
+			}
+		}
+		fetch := limit + 1
 		list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{
 			EventID:      eventID,
 			Limit:        fetch,
@@ -153,30 +155,29 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 				next = &enc
 			}
 		}
+		if s.cache != nil {
+			if raw, err := json.Marshal(guestListPageCached{Guests: list, Next: next}); err == nil {
+				_ = s.cache.Set(ctx, cacheKey, raw, guestListPageCacheTTL)
+			}
+		}
 		return list, next, nil
-	}
-
-	if sortNorm == "priority_desc" || sortNorm == "priority_asc" {
-		if decoded != nil {
-			return nil, nil, &ServiceError{Status: http.StatusBadRequest, Code: "CURSOR_NOT_SUPPORTED", Message: "Cursor pagination is not supported for priority sort; use offset or omit sort=priority_*."}
-		}
-		list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{EventID: eventID, Limit: guestListPrefetchMax, Offset: 0, Sort: sort, PriorityTier: ""})
-		if err != nil {
-			return nil, nil, &ServiceError{Status: http.StatusInternalServerError, Code: "QUERY_FAILED", Message: "Failed to load guests."}
-		}
-		applyGuestPriorityFromSQL(list)
-		sortGuestsByPriority(list, sortNorm)
-		return paginateGuests(list, offset, limit), nil, nil
 	}
 
 	if decoded != nil && offset > 0 {
 		offset = 0
 	}
 
-	fetch := limit + 1
-	if fetch > 10000 {
-		fetch = 10000
+	cacheKey := guestListPageCacheKey(eventID, sortNorm, "", limit, offset, cursorStr)
+	if s.cache != nil {
+		if raw, err := s.cache.Get(ctx, cacheKey); err == nil {
+			var p guestListPageCached
+			if json.Unmarshal(raw, &p) == nil {
+				return p.Guests, p.Next, nil
+			}
+		}
 	}
+
+	fetch := limit + 1
 	list, err := s.repo.ListGuests(ctx, guestrepo.ListGuestsParams{
 		EventID:      eventID,
 		Limit:        fetch,
@@ -202,12 +203,17 @@ func (s *Service) ListGuests(ctx context.Context, eventID uuid.UUID, limit, offs
 			next = &enc
 		}
 	}
+	if s.cache != nil {
+		if raw, err := json.Marshal(guestListPageCached{Guests: list, Next: next}); err == nil {
+			_ = s.cache.Set(ctx, cacheKey, raw, guestListPageCacheTTL)
+		}
+	}
 	return list, next, nil
 }
 
 func (s *Service) RelationshipScoreOverview(ctx context.Context, eventID uuid.UUID) (*RelationshipScoreOverview, *ServiceError) {
 	if s.cache != nil {
-		key := relationshipOverviewCacheKey(eventID)
+		key := cache.KeyRelationshipScoreOverview(eventID)
 		b, err := s.cache.Get(ctx, key)
 		if err == nil {
 			var o RelationshipScoreOverview
@@ -226,7 +232,7 @@ func (s *Service) RelationshipScoreOverview(ctx context.Context, eventID uuid.UU
 	out := buildRelationshipOverview(ranked)
 
 	if s.cache != nil {
-		key := relationshipOverviewCacheKey(eventID)
+		key := cache.KeyRelationshipScoreOverview(eventID)
 		if raw, err := json.Marshal(out); err == nil {
 			_ = s.cache.Set(ctx, key, raw, relationshipOverviewCacheTTL)
 		}
@@ -272,10 +278,11 @@ func buildRelationshipOverview(ranked []guestrepo.Guest) *RelationshipScoreOverv
 
 // InvalidateRelationshipOverview drops cached dashboard intelligence for an event.
 func (s *Service) InvalidateRelationshipOverview(ctx context.Context, eventID uuid.UUID) {
+	cache.InvalidateGuestListForEvent(ctx, s.cache, eventID)
 	if s.cache == nil {
 		return
 	}
-	_ = s.cache.Delete(ctx, relationshipOverviewCacheKey(eventID))
+	_ = s.cache.Delete(ctx, cache.KeyRelationshipScoreOverview(eventID))
 }
 
 func (s *Service) UpsertGuest(ctx context.Context, eventID uuid.UUID, input guestrepo.GuestInput) (string, *ServiceError) {

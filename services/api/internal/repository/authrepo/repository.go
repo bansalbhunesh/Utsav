@@ -25,6 +25,7 @@ type Repository interface {
 	FindUserIDByPhone(ctx context.Context, phone string) (uuid.UUID, error)
 	CreateUserWithPhone(ctx context.Context, phone string) (uuid.UUID, error)
 	InsertRefreshTokenHash(ctx context.Context, userID uuid.UUID, tokenHash string) error
+	PruneRefreshTokensForUser(ctx context.Context, userID uuid.UUID, maxKeep int) error
 	ConsumeRefreshTokenHash(ctx context.Context, tokenHash string) (uuid.UUID, error)
 	RevokeRefreshTokenHash(ctx context.Context, tokenHash string) error
 	GetUserProfileByID(ctx context.Context, userID uuid.UUID) (string, string, error)
@@ -89,6 +90,23 @@ func (r *PGRepository) InsertRefreshTokenHash(ctx context.Context, userID uuid.U
 		INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
 		VALUES ($1, $2, now() + interval '30 days')`,
 		userID, tokenHash)
+	return err
+}
+
+// PruneRefreshTokensForUser deletes older refresh token rows so at most maxKeep remain per user.
+func (r *PGRepository) PruneRefreshTokensForUser(ctx context.Context, userID uuid.UUID, maxKeep int) error {
+	if maxKeep < 1 {
+		maxKeep = 10
+	}
+	_, err := r.pool.Exec(ctx, `
+		DELETE FROM refresh_tokens rt
+		WHERE rt.user_id = $1
+		  AND rt.id NOT IN (
+		    SELECT id FROM refresh_tokens
+		    WHERE user_id = $1
+		    ORDER BY created_at DESC
+		    LIMIT $2
+		  )`, userID, maxKeep)
 	return err
 }
 

@@ -12,13 +12,21 @@ import (
 )
 
 type mockPublicRepo struct {
-	getUPIContextBySlugFn    func(ctx context.Context, slug string) (*publicrepo.UPIContext, error)
-	getEventBySlugFn         func(ctx context.Context, slug string) (*publicrepo.PublicEvent, error)
+	getUPIContextBySlugFn     func(ctx context.Context, slug string) (*publicrepo.UPIContext, error)
+	getEventBySlugFn          func(ctx context.Context, slug string) (*publicrepo.PublicEvent, error)
 	insertGuestShagunReportFn func(ctx context.Context, in publicrepo.GuestShagunReportInput) error
+	subEventBelongsToEventFn    func(ctx context.Context, eventID, subEventID uuid.UUID) (bool, error)
 }
 
 func (m *mockPublicRepo) GetSlugByEventID(context.Context, uuid.UUID) (string, error) {
 	return "", errors.New("not implemented")
+}
+
+func (m *mockPublicRepo) SubEventBelongsToEvent(ctx context.Context, eventID, subEventID uuid.UUID) (bool, error) {
+	if m.subEventBelongsToEventFn != nil {
+		return m.subEventBelongsToEventFn(ctx, eventID, subEventID)
+	}
+	return true, nil
 }
 
 func (m *mockPublicRepo) ResolveEventIDBySlug(ctx context.Context, slug string) (uuid.UUID, error) {
@@ -98,5 +106,30 @@ func TestReportShagunRejectsWrongEvent(t *testing.T) {
 	}
 	if err.Code != "WRONG_EVENT" {
 		t.Fatalf("expected WRONG_EVENT, got %s", err.Code)
+	}
+}
+
+func TestReportShagunRejectsSubEventNotOnEvent(t *testing.T) {
+	eventID := uuid.New()
+	foreignSub := uuid.New()
+	subStr := foreignSub.String()
+	svc := NewService(&mockPublicRepo{
+		getEventBySlugFn: func(_ context.Context, _ string) (*publicrepo.PublicEvent, error) {
+			return &publicrepo.PublicEvent{ID: eventID, Slug: "slug"}, nil
+		},
+		subEventBelongsToEventFn: func(_ context.Context, eid, sid uuid.UUID) (bool, error) {
+			if eid != eventID || sid != foreignSub {
+				t.Fatalf("unexpected validate args eid=%s sid=%s", eid, sid)
+			}
+			return false, nil
+		},
+	}, media.URLSigner{}, nil)
+
+	err := svc.ReportShagun(context.Background(), "slug", eventID, "9999999999", 501, "blessing", &subStr)
+	if err == nil {
+		t.Fatal("expected bad sub-event error")
+	}
+	if err.Code != "BAD_SUB_EVENT" {
+		t.Fatalf("expected BAD_SUB_EVENT, got %s", err.Code)
 	}
 }

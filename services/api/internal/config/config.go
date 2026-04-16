@@ -11,6 +11,8 @@ import (
 type Config struct {
 	HTTPPort                 string
 	DatabaseURL              string
+	// DatabaseReadURL optional read replica DSN for guest/public SELECT paths (same schema). Empty = use DatabaseURL only.
+	DatabaseReadURL          string
 	MigrationsPath           string
 	Env                      string
 	JWTSecret                string
@@ -42,6 +44,11 @@ type Config struct {
 	BetterstackHeartbeatURL  string
 	FrontendSentryDSN        string
 	AuthCookieDomain         string
+	// PublicMetrics when false omits /metrics from the HTTP router (default off in production).
+	PublicMetrics bool
+	DBMaxConns               int
+	DBMinConns               int
+	DBStatementTimeoutMs    int
 }
 
 func Load() (*Config, error) {
@@ -50,6 +57,7 @@ func Load() (*Config, error) {
 	if dsn == "" {
 		dsn = "postgres://utsav:utsav@localhost:5432/utsav?sslmode=disable"
 	}
+	dsnRead := strings.TrimSpace(os.Getenv("DATABASE_READ_URL"))
 	migrations := getenv("MIGRATIONS_PATH", "../../db/migrations")
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
@@ -85,9 +93,40 @@ func Load() (*Config, error) {
 			log.Fatal("OTP_SECRET must differ from JWT_SECRET in production so rotating JWT does not break in-flight OTP verification")
 		}
 	}
+	metricsPublicRaw := strings.TrimSpace(os.Getenv("METRICS_PUBLIC"))
+	publicMetrics := !isProd
+	switch strings.ToLower(metricsPublicRaw) {
+	case "1", "true", "yes", "on":
+		publicMetrics = true
+	case "0", "false", "no", "off":
+		publicMetrics = false
+	case "":
+		// keep default above
+	default:
+		log.Printf("WARN: METRICS_PUBLIC=%q is not a boolean; using default public_metrics=%v", metricsPublicRaw, publicMetrics)
+	}
+	if isProd && !publicMetrics {
+		log.Printf("INFO: Prometheus /metrics is not mounted (METRICS_PUBLIC unset or false). Set METRICS_PUBLIC=true only behind auth or a private listener.")
+	}
+	dbMax := mustAtoi(getenv("DB_MAX_CONNS", "20"), 20)
+	if dbMax < 1 {
+		dbMax = 20
+	}
+	dbMin := mustAtoi(getenv("DB_MIN_CONNS", "2"), 2)
+	if dbMin < 0 {
+		dbMin = 0
+	}
+	if dbMin > dbMax {
+		dbMin = dbMax
+	}
+	dbStmtMs := mustAtoi(getenv("DB_STATEMENT_TIMEOUT_MS", "5000"), 5000)
+	if dbStmtMs < 100 {
+		dbStmtMs = 5000
+	}
 	return &Config{
 		HTTPPort:                 port,
 		DatabaseURL:              dsn,
+		DatabaseReadURL:          dsnRead,
 		MigrationsPath:           migrations,
 		Env:                      env,
 		JWTSecret:                secret,
@@ -119,6 +158,10 @@ func Load() (*Config, error) {
 		BetterstackHeartbeatURL:  getenv("BETTERSTACK_HEARTBEAT_URL", ""),
 		FrontendSentryDSN:        getenv("NEXT_PUBLIC_SENTRY_DSN", ""),
 		AuthCookieDomain:         getenv("AUTH_COOKIE_DOMAIN", ""),
+		PublicMetrics:            publicMetrics,
+		DBMaxConns:               dbMax,
+		DBMinConns:               dbMin,
+		DBStatementTimeoutMs:     dbStmtMs,
 	}, nil
 }
 
