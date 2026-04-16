@@ -92,6 +92,18 @@ async function refreshAccessToken(): Promise<boolean> {
   }
 }
 
+let refreshInFlight: Promise<boolean> | null = null
+
+async function refreshAccessTokenSingleflight(): Promise<boolean> {
+  if (refreshInFlight) {
+    return refreshInFlight
+  }
+  refreshInFlight = refreshAccessToken().finally(() => {
+    refreshInFlight = null
+  })
+  return refreshInFlight
+}
+
 export async function apiFetch<T>(
   endpoint: string,
   options: ApiOptions = {}
@@ -99,12 +111,15 @@ export async function apiFetch<T>(
   try {
     return await performFetch<T>(endpoint, { ...options })
   } catch (rawErr) {
-    const response = rawErr as Response
-    if (response?.status !== 401) {
+    if (!(rawErr instanceof Response)) {
+      throw new ApiError('Network error', 0)
+    }
+    const response = rawErr
+    if (response.status !== 401) {
       throw await parseApiError(response)
     }
 
-    const refreshed = await refreshAccessToken()
+    const refreshed = await refreshAccessTokenSingleflight()
     if (!refreshed) {
       clearTokens()
       throw new Error('Session expired. Please log in again.')
@@ -113,7 +128,10 @@ export async function apiFetch<T>(
     try {
       return await performFetch<T>(endpoint, { ...options })
     } catch (retryErr) {
-      const retryResponse = retryErr as Response
+      if (!(retryErr instanceof Response)) {
+        throw new ApiError('Network error', 0)
+      }
+      const retryResponse = retryErr
       throw await parseApiError(retryResponse)
     }
   }

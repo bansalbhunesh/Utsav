@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_billing_checkouts_razorpay_order_id;

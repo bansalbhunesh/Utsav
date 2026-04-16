@@ -19,7 +19,10 @@ func (m *mockAuthRepo) InsertPhoneOTPChallenge(context.Context, string, string) 
 func (m *mockAuthRepo) GetLatestPhoneOTPChallenge(context.Context, string) (*authrepo.OTPChallenge, error) {
 	return nil, nil
 }
-func (m *mockAuthRepo) IncrementPhoneOTPAttempts(context.Context, uuid.UUID) error   { return nil }
+func (m *mockAuthRepo) IncrementPhoneOTPAttempts(context.Context, uuid.UUID) error { return nil }
+func (m *mockAuthRepo) ConsumePhoneOTPChallengeByID(context.Context, uuid.UUID) (bool, error) {
+	return true, nil
+}
 func (m *mockAuthRepo) DeletePhoneOTPChallengeByID(context.Context, uuid.UUID) error { return nil }
 func (m *mockAuthRepo) FindUserIDByPhone(context.Context, string) (uuid.UUID, error) {
 	return uuid.Nil, nil
@@ -32,11 +35,8 @@ func (m *mockAuthRepo) PruneRefreshTokensForUser(context.Context, uuid.UUID, int
 func (m *mockAuthRepo) ConsumeRefreshTokenHash(context.Context, string) (uuid.UUID, error) {
 	return uuid.Nil, nil
 }
-func (m *mockAuthRepo) GetRefreshTokenUserID(context.Context, string) (uuid.UUID, error) {
+func (m *mockAuthRepo) RotateRefreshToken(context.Context, string, string) (uuid.UUID, error) {
 	return uuid.Nil, nil
-}
-func (m *mockAuthRepo) RotateRefreshToken(context.Context, string, string, uuid.UUID) error {
-	return nil
 }
 func (m *mockAuthRepo) RevokeRefreshTokenHash(context.Context, string) error { return nil }
 func (m *mockAuthRepo) GetUserProfileByID(ctx context.Context, userID uuid.UUID) (string, string, error) {

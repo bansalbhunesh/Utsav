@@ -52,13 +52,13 @@ type repository interface {
 	InsertPhoneOTPChallenge(ctx context.Context, phone, codeHash string) error
 	GetLatestPhoneOTPChallenge(ctx context.Context, phone string) (*authrepo.OTPChallenge, error)
 	IncrementPhoneOTPAttempts(ctx context.Context, id uuid.UUID) error
+	ConsumePhoneOTPChallengeByID(ctx context.Context, id uuid.UUID) (bool, error)
 	DeletePhoneOTPChallengeByID(ctx context.Context, id uuid.UUID) error
 	FindUserIDByPhone(ctx context.Context, phone string) (uuid.UUID, error)
 	CreateUserWithPhone(ctx context.Context, phone string) (uuid.UUID, error)
 	InsertRefreshTokenHash(ctx context.Context, userID uuid.UUID, tokenHash string) error
 	PruneRefreshTokensForUser(ctx context.Context, userID uuid.UUID, maxKeep int) error
-	GetRefreshTokenUserID(ctx context.Context, tokenHash string) (uuid.UUID, error)
-	RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string, expectedUserID uuid.UUID) error
+	RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string) (uuid.UUID, error)
 	RevokeRefreshTokenHash(ctx context.Context, tokenHash string) error
 	GetUserProfileByID(ctx context.Context, userID uuid.UUID) (string, string, error)
 }
@@ -186,7 +186,13 @@ func (s *Service) VerifyOTP(ctx context.Context, phone, code, clientIP string) (
 		}
 		return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "INVALID_OTP", Message: "The OTP code is invalid."}
 	}
-	_ = s.repo.DeletePhoneOTPChallengeByID(ctx, ch.ID)
+	consumed, consumeErr := s.repo.ConsumePhoneOTPChallengeByID(ctx, ch.ID)
+	if consumeErr != nil {
+		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_STATE_FAILED", Message: "Unable to update OTP state."}
+	}
+	if !consumed {
+		return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "NO_CHALLENGE", Message: "No active OTP challenge found."}
+	}
 
 	userID, err := s.repo.FindUserIDByPhone(ctx, phone)
 	if err != nil {
@@ -238,23 +244,16 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*RefreshRes
 	sum2 := sha256.Sum256(rawRefresh)
 	newHash := hex.EncodeToString(sum2[:])
 
-	userID, err := s.repo.GetRefreshTokenUserID(ctx, oldHash)
+	rotatedUserID, err := s.repo.RotateRefreshToken(ctx, oldHash, newHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "INVALID_REFRESH", Message: "Refresh token is invalid or expired."}
 		}
 		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "REFRESH_PERSIST_FAILED", Message: "Unable to persist refresh token."}
 	}
-	access, err := authtoken.SignAccessToken(userID, s.jwtSecret, 48*time.Hour)
+	access, err := authtoken.SignAccessToken(rotatedUserID, s.jwtSecret, 48*time.Hour)
 	if err != nil {
 		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "TOKEN_SIGN_FAILED", Message: "Unable to create access token."}
-	}
-	err = s.repo.RotateRefreshToken(ctx, oldHash, newHash, userID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "INVALID_REFRESH", Message: "Refresh token is invalid or expired."}
-		}
-		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "REFRESH_PERSIST_FAILED", Message: "Unable to persist refresh token."}
 	}
 
 	return &RefreshResult{

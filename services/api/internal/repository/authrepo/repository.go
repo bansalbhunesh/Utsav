@@ -2,7 +2,6 @@ package authrepo
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,14 +21,14 @@ type Repository interface {
 	InsertPhoneOTPChallenge(ctx context.Context, phone, codeHash string) error
 	GetLatestPhoneOTPChallenge(ctx context.Context, phone string) (*OTPChallenge, error)
 	IncrementPhoneOTPAttempts(ctx context.Context, id uuid.UUID) error
+	ConsumePhoneOTPChallengeByID(ctx context.Context, id uuid.UUID) (bool, error)
 	DeletePhoneOTPChallengeByID(ctx context.Context, id uuid.UUID) error
 	FindUserIDByPhone(ctx context.Context, phone string) (uuid.UUID, error)
 	CreateUserWithPhone(ctx context.Context, phone string) (uuid.UUID, error)
 	InsertRefreshTokenHash(ctx context.Context, userID uuid.UUID, tokenHash string) error
 	PruneRefreshTokensForUser(ctx context.Context, userID uuid.UUID, maxKeep int) error
 	ConsumeRefreshTokenHash(ctx context.Context, tokenHash string) (uuid.UUID, error)
-	GetRefreshTokenUserID(ctx context.Context, tokenHash string) (uuid.UUID, error)
-	RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string, expectedUserID uuid.UUID) error
+	RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string) (uuid.UUID, error)
 	RevokeRefreshTokenHash(ctx context.Context, tokenHash string) error
 	GetUserProfileByID(ctx context.Context, userID uuid.UUID) (string, string, error)
 }
@@ -74,6 +73,14 @@ func (r *PGRepository) IncrementPhoneOTPAttempts(ctx context.Context, id uuid.UU
 func (r *PGRepository) DeletePhoneOTPChallengeByID(ctx context.Context, id uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM phone_otp_challenges WHERE id=$1`, id)
 	return err
+}
+
+func (r *PGRepository) ConsumePhoneOTPChallengeByID(ctx context.Context, id uuid.UUID) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM phone_otp_challenges WHERE id=$1`, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (r *PGRepository) FindUserIDByPhone(ctx context.Context, phone string) (uuid.UUID, error) {
@@ -124,21 +131,11 @@ func (r *PGRepository) ConsumeRefreshTokenHash(ctx context.Context, tokenHash st
 	return userID, nil
 }
 
-func (r *PGRepository) GetRefreshTokenUserID(ctx context.Context, tokenHash string) (uuid.UUID, error) {
-	var userID uuid.UUID
-	err := r.pool.QueryRow(ctx, `
-		SELECT user_id FROM refresh_tokens WHERE token_hash=$1 AND expires_at > now()`, tokenHash).Scan(&userID)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	return userID, nil
-}
-
 // RotateRefreshToken deletes the old refresh token row and inserts the new hash in one transaction.
-func (r *PGRepository) RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string, expectedUserID uuid.UUID) error {
+func (r *PGRepository) RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string) (uuid.UUID, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	defer tx.Rollback(ctx)
 
@@ -147,24 +144,24 @@ func (r *PGRepository) RotateRefreshToken(ctx context.Context, oldTokenHash, new
 		SELECT user_id FROM refresh_tokens WHERE token_hash=$1 AND expires_at > now()
 		FOR UPDATE`, oldTokenHash).Scan(&userID)
 	if err != nil {
-		return err
-	}
-	if expectedUserID != uuid.Nil && userID != expectedUserID {
-		return errors.New("refresh token user mismatch")
+		return uuid.Nil, err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM refresh_tokens WHERE token_hash=$1`, oldTokenHash); err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
 		VALUES ($1, $2, now() + interval '30 days')`,
 		userID, newTokenHash); err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	if err := pruneRefreshTokensForUserTx(ctx, tx, userID, 10); err != nil {
-		return err
+		return uuid.Nil, err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return uuid.Nil, err
+	}
+	return userID, nil
 }
 
 func pruneRefreshTokensForUserTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, maxKeep int) error {

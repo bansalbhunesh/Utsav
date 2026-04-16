@@ -53,6 +53,7 @@ type Repository interface {
 	InsertRSVPOTPChallenge(ctx context.Context, eventID uuid.UUID, phone, codeHash string) error
 	GetLatestRSVPOTPChallenge(ctx context.Context, eventID uuid.UUID, phone string) (*OTPChallenge, error)
 	IncrementRSVPOTPAttempts(ctx context.Context, id uuid.UUID) error
+	ConsumeRSVPOTPChallengeByID(ctx context.Context, id uuid.UUID) (bool, error)
 	DeleteRSVPOTPChallengeByID(ctx context.Context, id uuid.UUID) error
 	UpsertRSVPResponses(ctx context.Context, eventID uuid.UUID, phone string, items []RSVPItem) error
 	UpsertRSVPResponsesIdempotent(ctx context.Context, scope, idempotencyKey, fingerprint string, eventID uuid.UUID, phone string, items []RSVPItem) error
@@ -100,6 +101,14 @@ func (r *PGRepository) GetLatestRSVPOTPChallenge(ctx context.Context, eventID uu
 func (r *PGRepository) DeleteRSVPOTPChallengeByID(ctx context.Context, id uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM rsvp_otp_challenges WHERE id=$1`, id)
 	return err
+}
+
+func (r *PGRepository) ConsumeRSVPOTPChallengeByID(ctx context.Context, id uuid.UUID) (bool, error) {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM rsvp_otp_challenges WHERE id=$1`, id)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (r *PGRepository) IncrementRSVPOTPAttempts(ctx context.Context, id uuid.UUID) error {

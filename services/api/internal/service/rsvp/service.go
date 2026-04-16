@@ -167,7 +167,13 @@ func (s *Service) VerifyOTP(ctx context.Context, eventID uuid.UUID, phone, code,
 		}
 		return "", &ServiceError{Status: http.StatusUnauthorized, Code: "INVALID_OTP", Message: "Invalid RSVP OTP code."}
 	}
-	_ = s.repo.DeleteRSVPOTPChallengeByID(ctx, ch.ID)
+	consumed, consumeErr := s.repo.ConsumeRSVPOTPChallengeByID(ctx, ch.ID)
+	if consumeErr != nil {
+		return "", &ServiceError{Status: http.StatusInternalServerError, Code: "OTP_STATE_FAILED", Message: "Unable to update RSVP OTP state."}
+	}
+	if !consumed {
+		return "", &ServiceError{Status: http.StatusUnauthorized, Code: "NO_CHALLENGE", Message: "No active RSVP OTP challenge found."}
+	}
 
 	tok, err := auth.SignGuestToken(eventID, phone, s.jwtSecret, 24*time.Hour)
 	if err != nil {
