@@ -2,7 +2,9 @@ package middleware
 
 import (
 	"encoding/json"
+	"net/url"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -50,12 +52,20 @@ func Logger() gin.HandlerFunc {
 }
 
 func CORS(origins []string) gin.HandlerFunc {
+	normalized := make([]string, 0, len(origins))
+	for _, o := range origins {
+		if no := normalizeOrigin(o); no != "" {
+			normalized = append(normalized, no)
+		}
+	}
+
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
+		normalizedOrigin := normalizeOrigin(origin)
 		allowed := ""
-		for _, o := range origins {
-			if o == origin {
-				allowed = o
+		for _, o := range normalized {
+			if strings.EqualFold(o, normalizedOrigin) {
+				allowed = normalizedOrigin
 				break
 			}
 		}
@@ -66,11 +76,27 @@ func CORS(origins []string) gin.HandlerFunc {
 			c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 		}
 		if c.Request.Method == http.MethodOptions {
+			if origin != "" && allowed == "" {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
 			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
 		c.Next()
 	}
+}
+
+func normalizeOrigin(origin string) string {
+	origin = strings.TrimSpace(origin)
+	if origin == "" {
+		return ""
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return strings.TrimSuffix(origin, "/")
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 func RecoverJSON() gin.HandlerFunc {
