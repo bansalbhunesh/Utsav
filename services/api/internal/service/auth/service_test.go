@@ -14,19 +14,28 @@ type mockAuthRepo struct {
 	getUserProfileByIDFn func(ctx context.Context, userID uuid.UUID) (string, string, error)
 }
 
-func (m *mockAuthRepo) DeletePhoneOTPChallenges(context.Context, string) error { return nil }
+func (m *mockAuthRepo) DeletePhoneOTPChallenges(context.Context, string) error        { return nil }
 func (m *mockAuthRepo) InsertPhoneOTPChallenge(context.Context, string, string) error { return nil }
 func (m *mockAuthRepo) GetLatestPhoneOTPChallenge(context.Context, string) (*authrepo.OTPChallenge, error) {
 	return nil, nil
 }
-func (m *mockAuthRepo) IncrementPhoneOTPAttempts(context.Context, uuid.UUID) error { return nil }
+func (m *mockAuthRepo) IncrementPhoneOTPAttempts(context.Context, uuid.UUID) error   { return nil }
 func (m *mockAuthRepo) DeletePhoneOTPChallengeByID(context.Context, uuid.UUID) error { return nil }
-func (m *mockAuthRepo) FindUserIDByPhone(context.Context, string) (uuid.UUID, error) { return uuid.Nil, nil }
-func (m *mockAuthRepo) CreateUserWithPhone(context.Context, string) (uuid.UUID, error) { return uuid.Nil, nil }
+func (m *mockAuthRepo) FindUserIDByPhone(context.Context, string) (uuid.UUID, error) {
+	return uuid.Nil, nil
+}
+func (m *mockAuthRepo) CreateUserWithPhone(context.Context, string) (uuid.UUID, error) {
+	return uuid.Nil, nil
+}
 func (m *mockAuthRepo) InsertRefreshTokenHash(context.Context, uuid.UUID, string) error { return nil }
 func (m *mockAuthRepo) PruneRefreshTokensForUser(context.Context, uuid.UUID, int) error { return nil }
-func (m *mockAuthRepo) ConsumeRefreshTokenHash(context.Context, string) (uuid.UUID, error) { return uuid.Nil, nil }
-func (m *mockAuthRepo) RotateRefreshToken(context.Context, string, string, func(uuid.UUID) error) error {
+func (m *mockAuthRepo) ConsumeRefreshTokenHash(context.Context, string) (uuid.UUID, error) {
+	return uuid.Nil, nil
+}
+func (m *mockAuthRepo) GetRefreshTokenUserID(context.Context, string) (uuid.UUID, error) {
+	return uuid.Nil, nil
+}
+func (m *mockAuthRepo) RotateRefreshToken(context.Context, string, string, uuid.UUID) error {
 	return nil
 }
 func (m *mockAuthRepo) RevokeRefreshTokenHash(context.Context, string) error { return nil }

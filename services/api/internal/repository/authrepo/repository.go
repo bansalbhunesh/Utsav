@@ -10,9 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ErrRefreshAccessSignFailed wraps an error from the pre-commit hook (e.g. JWT signing) so callers can map HTTP status.
-var ErrRefreshAccessSignFailed = errors.New("refresh access token sign failed")
-
 type OTPChallenge struct {
 	ID        uuid.UUID
 	CodeHash  string
@@ -31,8 +28,8 @@ type Repository interface {
 	InsertRefreshTokenHash(ctx context.Context, userID uuid.UUID, tokenHash string) error
 	PruneRefreshTokensForUser(ctx context.Context, userID uuid.UUID, maxKeep int) error
 	ConsumeRefreshTokenHash(ctx context.Context, tokenHash string) (uuid.UUID, error)
-	// RotateRefreshToken runs beforeCommit inside the DB transaction after the old token row is locked; if beforeCommit returns an error, the rotation is rolled back.
-	RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string, beforeCommit func(userID uuid.UUID) error) error
+	GetRefreshTokenUserID(ctx context.Context, tokenHash string) (uuid.UUID, error)
+	RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string, expectedUserID uuid.UUID) error
 	RevokeRefreshTokenHash(ctx context.Context, tokenHash string) error
 	GetUserProfileByID(ctx context.Context, userID uuid.UUID) (string, string, error)
 }
@@ -127,8 +124,18 @@ func (r *PGRepository) ConsumeRefreshTokenHash(ctx context.Context, tokenHash st
 	return userID, nil
 }
 
-// RotateRefreshToken deletes the old refresh token row and inserts the new hash in one transaction, then prunes older rows.
-func (r *PGRepository) RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string, beforeCommit func(userID uuid.UUID) error) error {
+func (r *PGRepository) GetRefreshTokenUserID(ctx context.Context, tokenHash string) (uuid.UUID, error) {
+	var userID uuid.UUID
+	err := r.pool.QueryRow(ctx, `
+		SELECT user_id FROM refresh_tokens WHERE token_hash=$1 AND expires_at > now()`, tokenHash).Scan(&userID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return userID, nil
+}
+
+// RotateRefreshToken deletes the old refresh token row and inserts the new hash in one transaction.
+func (r *PGRepository) RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string, expectedUserID uuid.UUID) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -142,10 +149,8 @@ func (r *PGRepository) RotateRefreshToken(ctx context.Context, oldTokenHash, new
 	if err != nil {
 		return err
 	}
-	if beforeCommit != nil {
-		if err := beforeCommit(userID); err != nil {
-			return errors.Join(ErrRefreshAccessSignFailed, err)
-		}
+	if expectedUserID != uuid.Nil && userID != expectedUserID {
+		return errors.New("refresh token user mismatch")
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM refresh_tokens WHERE token_hash=$1`, oldTokenHash); err != nil {
 		return err

@@ -39,7 +39,6 @@ import (
 	"github.com/bhune/utsav/services/api/internal/repository/rsvprepo"
 	"github.com/bhune/utsav/services/api/internal/repository/shagunrepo"
 	"github.com/bhune/utsav/services/api/internal/repository/vendorrepo"
-	"github.com/jackc/pgx/v5/pgxpool"
 	authservice "github.com/bhune/utsav/services/api/internal/service/auth"
 	billingservice "github.com/bhune/utsav/services/api/internal/service/billing"
 	broadcastservice "github.com/bhune/utsav/services/api/internal/service/broadcast"
@@ -52,6 +51,7 @@ import (
 	rsvpservice "github.com/bhune/utsav/services/api/internal/service/rsvp"
 	shagunservice "github.com/bhune/utsav/services/api/internal/service/shagun"
 	vendorservice "github.com/bhune/utsav/services/api/internal/service/vendor"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func startIdempotencyKeyCleanup(pool *pgxpool.Pool) {
@@ -257,9 +257,9 @@ func main() {
 		Addr:              addr,
 		Handler:           r,
 		ReadHeaderTimeout: 15 * time.Second,
-		ReadTimeout:       20 * time.Second,
+		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		IdleTimeout:       90 * time.Second,
 	}
 	go func() {
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

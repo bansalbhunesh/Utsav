@@ -57,7 +57,8 @@ type repository interface {
 	CreateUserWithPhone(ctx context.Context, phone string) (uuid.UUID, error)
 	InsertRefreshTokenHash(ctx context.Context, userID uuid.UUID, tokenHash string) error
 	PruneRefreshTokensForUser(ctx context.Context, userID uuid.UUID, maxKeep int) error
-	RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string, beforeCommit func(userID uuid.UUID) error) error
+	GetRefreshTokenUserID(ctx context.Context, tokenHash string) (uuid.UUID, error)
+	RotateRefreshToken(ctx context.Context, oldTokenHash, newTokenHash string, expectedUserID uuid.UUID) error
 	RevokeRefreshTokenHash(ctx context.Context, tokenHash string) error
 	GetUserProfileByID(ctx context.Context, userID uuid.UUID) (string, string, error)
 }
@@ -237,18 +238,21 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*RefreshRes
 	sum2 := sha256.Sum256(rawRefresh)
 	newHash := hex.EncodeToString(sum2[:])
 
-	var access string
-	err = s.repo.RotateRefreshToken(ctx, oldHash, newHash, func(userID uuid.UUID) error {
-		var err error
-		access, err = authtoken.SignAccessToken(userID, s.jwtSecret, 48*time.Hour)
-		return err
-	})
+	userID, err := s.repo.GetRefreshTokenUserID(ctx, oldHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "INVALID_REFRESH", Message: "Refresh token is invalid or expired."}
 		}
-		if errors.Is(err, authrepo.ErrRefreshAccessSignFailed) {
-			return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "TOKEN_SIGN_FAILED", Message: "Unable to create access token."}
+		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "REFRESH_PERSIST_FAILED", Message: "Unable to persist refresh token."}
+	}
+	access, err := authtoken.SignAccessToken(userID, s.jwtSecret, 48*time.Hour)
+	if err != nil {
+		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "TOKEN_SIGN_FAILED", Message: "Unable to create access token."}
+	}
+	err = s.repo.RotateRefreshToken(ctx, oldHash, newHash, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "INVALID_REFRESH", Message: "Refresh token is invalid or expired."}
 		}
 		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "REFRESH_PERSIST_FAILED", Message: "Unable to persist refresh token."}
 	}

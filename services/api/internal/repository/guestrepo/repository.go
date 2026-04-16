@@ -195,8 +195,7 @@ func (r *PGRepository) ListGuests(ctx context.Context, p ListGuestsParams) ([]Gu
 		limitOffsetSQL = fmt.Sprintf(`LIMIT $%d OFFSET $%d`, limitPos, offPos)
 	}
 
-	// Primary: organiser guest list must not read stale rows behind a replica.
-	rows, err := r.write.Query(ctx, `
+	rows, err := r.read.Query(ctx, `
 		WITH guest_enriched AS (
 			SELECT
 				g.id, g.name, g.phone, g.email, g.relationship, g.side, g.tags, g.group_id,
@@ -404,12 +403,12 @@ func (r *PGRepository) ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, r
 	result := &ImportResult{Imported: 0, Errors: []ImportError{}}
 
 	type csvRow struct {
-		line       int
-		name       string
-		phone      string
-		email      string
-		rel        string
-		side       string
+		line  int
+		name  string
+		phone string
+		email string
+		rel   string
+		side  string
 	}
 
 	valid := make([]csvRow, 0)
