@@ -2,17 +2,37 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useEffect } from 'react'
 import { ChevronLeft, Loader2, Sparkles, ShieldCheck, Smartphone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { apiFetch } from '@/lib/api'
 
 export default function LoginPage() {
+  const router = useRouter()
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [step, setStep] = useState<'PHONE' | 'OTP'>('PHONE')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isCheckingSession, setIsCheckingSession] = useState(true)
+
+  useEffect(() => {
+    const checkExistingSession = async () => {
+      try {
+        await apiFetch<{ id: string }>('/v1/me')
+        router.replace('/dashboard')
+        router.refresh()
+      } catch {
+        // no active session; stay on login
+      } finally {
+        setIsCheckingSession(false)
+      }
+    }
+
+    void checkExistingSession()
+  }, [router])
 
   const handleRequestOTP = async () => {
     if (!phone) return
@@ -40,13 +60,21 @@ export default function LoginPage() {
         '/v1/auth/otp/verify',
         { method: 'POST', json: { phone, code } }
       )
-      // Redirect to dashboard
-      window.location.href = '/dashboard'
+      router.replace('/dashboard')
+      router.refresh()
     } catch {
       setError('Invalid code. Please try again.')
     } finally {
       setIsLoading(false)
     }
+  }
+
+  if (isCheckingSession) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-white">
+        <Loader2 className="w-8 h-8 animate-spin text-orange-600" />
+      </div>
+    )
   }
 
   return (
