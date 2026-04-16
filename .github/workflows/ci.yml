@@ -39,7 +39,7 @@ jobs:
         run: |
           go mod tidy
           go test ./...
-          go build -o /tmp/utsav-api ./cmd/server
+          go build -o /tmp/utsav-api ./cmd/api
 
   api-integration:
     runs-on: ubuntu-latest
@@ -53,13 +53,13 @@ jobs:
           go-version: "1.22"
       - name: Integration migration test (testcontainers)
         run: |
-          go test -tags=integration ./internal/httpserver -run TestMigrationsAgainstPostgresContainer -v
+          go test -tags=integration ./internal/handler -run TestMigrationsAgainstPostgresContainer -v
 
   web:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: .
+        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -88,7 +88,7 @@ jobs:
         run: go mod tidy
 
       - name: Install web deps
-        working-directory: .
+        working-directory: frontend
         run: |
           npm install
 
@@ -98,13 +98,14 @@ jobs:
           MIGRATIONS_PATH: ../../db/migrations
           RUN_MIGRATIONS: "true"
           JWT_SECRET: ci-secret
+          PORT: "8080"
           HTTP_PORT: "8080"
           CORS_ORIGIN: http://127.0.0.1:3000
         run: |
           docker run -d --name utsav-ci-pg -e POSTGRES_USER=utsav -e POSTGRES_PASSWORD=utsav -e POSTGRES_DB=utsav -p 5432:5432 postgres:16-alpine
           for i in {1..30}; do docker exec utsav-ci-pg pg_isready -U utsav -d utsav && break; sleep 2; done
           cd services/api
-          go run ./cmd/server > /tmp/utsav-api.log 2>&1 &
+          go run ./cmd/api > /tmp/utsav-api.log 2>&1 &
           echo $! > /tmp/utsav-api.pid
           for i in {1..60}; do curl -fsS http://127.0.0.1:8080/v1/healthz && break; sleep 2; done
 
@@ -112,6 +113,7 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8080
         run: |
+          cd frontend
           npm run dev > /tmp/utsav-web.log 2>&1 &
           echo $! > /tmp/utsav-web.pid
           for i in {1..60}; do curl -fsS http://127.0.0.1:3000 && break; sleep 2; done
@@ -121,7 +123,7 @@ jobs:
           E2E_BASE_URL: http://127.0.0.1:3000
           E2E_PHONE: +919876543210
           E2E_OTP: "123456"
-        working-directory: .
+        working-directory: frontend
         run: npm run test:e2e
 
       - name: Cleanup
