@@ -2,35 +2,19 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { ChevronLeft, Loader2, Sparkles, ShieldCheck, Smartphone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { apiFetch } from '@/lib/api'
 
 export default function LoginPage() {
+  const router = useRouter()
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [step, setStep] = useState<'PHONE' | 'OTP'>('PHONE')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [isCheckingSession, setIsCheckingSession] = useState(true)
-
-  useEffect(() => {
-    const checkExistingSession = async () => {
-      try {
-        await apiFetch<{ id: string }>('/v1/me')
-        // Full navigation avoids racing soft navigation with router.refresh on the login route.
-        window.location.assign('/dashboard')
-      } catch {
-        // no active session; stay on login
-      } finally {
-        setIsCheckingSession(false)
-      }
-    }
-
-    void checkExistingSession()
-  }, [])
 
   const handleRequestOTP = async () => {
     if (!phone) return
@@ -58,21 +42,14 @@ export default function LoginPage() {
         '/v1/auth/otp/verify',
         { method: 'POST', json: { phone, code } }
       )
-      // Hard navigation: reliable after Set-Cookie + avoids RSC soft-nav race with /login.
-      window.location.assign('/dashboard')
+      // Client-side navigation: a full document load to /dashboard can 307→/login (e.g. edge rules)
+      // and the old “session probe + location.assign” looped forever. Soft nav + cookies on API fetch works.
+      router.replace('/dashboard')
     } catch {
       setError('Invalid code. Please try again.')
     } finally {
       setIsLoading(false)
     }
-  }
-
-  if (isCheckingSession) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <Loader2 className="w-8 h-8 animate-spin text-orange-600" />
-      </div>
-    )
   }
 
   return (
