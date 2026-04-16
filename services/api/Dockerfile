@@ -1,11 +1,10 @@
+# Build context must be the services/api directory (e.g. Render "Docker Build Context" = services/api).
+# Local: cd services/api && docker build -f Dockerfile .
 FROM golang:1.25-alpine AS build
-WORKDIR /app
-COPY services/api/go.mod services/api/go.sum ./services/api/
-WORKDIR /app/services/api
+WORKDIR /src
+COPY go.mod go.sum ./
 RUN go mod download
-WORKDIR /app
 COPY . .
-WORKDIR /app/services/api
 RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/utsav-api ./cmd/api && \
     CGO_ENABLED=0 GOOS=linux go build -o /bin/utsav-worker ./cmd/worker
 
