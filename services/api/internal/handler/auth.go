@@ -1,7 +1,9 @@
 package httpserver
 
 import (
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -15,7 +17,8 @@ const (
 )
 
 func (s *Server) setAuthCookies(c *gin.Context, accessToken, refreshToken string) {
-	secure := s.Config != nil && strings.EqualFold(strings.TrimSpace(s.Config.Env), "production")
+	secure := s.isSecureCookieRequest(c)
+	sameSite := s.cookieSameSite(c)
 	domain := ""
 	if s.Config != nil {
 		domain = strings.TrimSpace(s.Config.AuthCookieDomain)
@@ -27,7 +30,7 @@ func (s *Server) setAuthCookies(c *gin.Context, accessToken, refreshToken string
 		Domain:   domain,
 		HttpOnly: true,
 		Secure:   secure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: sameSite,
 		MaxAge:   int((48 * time.Hour).Seconds()),
 	})
 	http.SetCookie(c.Writer, &http.Cookie{
@@ -37,19 +40,59 @@ func (s *Server) setAuthCookies(c *gin.Context, accessToken, refreshToken string
 		Domain:   domain,
 		HttpOnly: true,
 		Secure:   secure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: sameSite,
 		MaxAge:   int((30 * 24 * time.Hour).Seconds()),
 	})
 }
 
 func (s *Server) clearAuthCookies(c *gin.Context) {
-	secure := s.Config != nil && strings.EqualFold(strings.TrimSpace(s.Config.Env), "production")
+	secure := s.isSecureCookieRequest(c)
+	sameSite := s.cookieSameSite(c)
 	domain := ""
 	if s.Config != nil {
 		domain = strings.TrimSpace(s.Config.AuthCookieDomain)
 	}
-	http.SetCookie(c.Writer, &http.Cookie{Name: accessTokenCookieName, Value: "", Path: "/", Domain: domain, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: -1})
-	http.SetCookie(c.Writer, &http.Cookie{Name: refreshTokenCookieName, Value: "", Path: "/", Domain: domain, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	http.SetCookie(c.Writer, &http.Cookie{Name: accessTokenCookieName, Value: "", Path: "/", Domain: domain, HttpOnly: true, Secure: secure, SameSite: sameSite, MaxAge: -1})
+	http.SetCookie(c.Writer, &http.Cookie{Name: refreshTokenCookieName, Value: "", Path: "/", Domain: domain, HttpOnly: true, Secure: secure, SameSite: sameSite, MaxAge: -1})
+}
+
+func (s *Server) isSecureCookieRequest(c *gin.Context) bool {
+	if c.Request != nil && c.Request.TLS != nil {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")), "https") {
+		return true
+	}
+	return s.Config != nil && strings.EqualFold(strings.TrimSpace(s.Config.Env), "production")
+}
+
+func (s *Server) cookieSameSite(c *gin.Context) http.SameSite {
+	origin := strings.TrimSpace(c.GetHeader("Origin"))
+	if origin == "" {
+		return http.SameSiteLaxMode
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return http.SameSiteLaxMode
+	}
+	originHost := hostOnly(u.Host)
+	requestHost := hostOnly(c.Request.Host)
+	if originHost != "" && requestHost != "" && !strings.EqualFold(originHost, requestHost) {
+		// Cross-site browser requests need SameSite=None and Secure cookies.
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteLaxMode
+}
+
+func hostOnly(h string) string {
+	if h == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(h)
+	if err == nil {
+		return strings.TrimSpace(host)
+	}
+	return strings.TrimSpace(h)
 }
 
 func (s *Server) postOTPRequest(c *gin.Context) {
