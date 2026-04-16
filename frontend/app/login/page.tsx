@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { useEffect } from 'react'
 import { ChevronLeft, Loader2, Sparkles, ShieldCheck, Smartphone } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -10,7 +9,6 @@ import { Input } from '@/components/ui/input'
 import { apiFetch } from '@/lib/api'
 
 export default function LoginPage() {
-  const router = useRouter()
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
   const [step, setStep] = useState<'PHONE' | 'OTP'>('PHONE')
@@ -22,8 +20,8 @@ export default function LoginPage() {
     const checkExistingSession = async () => {
       try {
         await apiFetch<{ id: string }>('/v1/me')
-        router.replace('/dashboard')
-        router.refresh()
+        // Full navigation avoids racing soft navigation with router.refresh on the login route.
+        window.location.assign('/dashboard')
       } catch {
         // no active session; stay on login
       } finally {
@@ -32,7 +30,7 @@ export default function LoginPage() {
     }
 
     void checkExistingSession()
-  }, [router])
+  }, [])
 
   const handleRequestOTP = async () => {
     if (!phone) return
@@ -60,8 +58,8 @@ export default function LoginPage() {
         '/v1/auth/otp/verify',
         { method: 'POST', json: { phone, code } }
       )
-      router.replace('/dashboard')
-      router.refresh()
+      // Hard navigation: reliable after Set-Cookie + avoids RSC soft-nav race with /login.
+      window.location.assign('/dashboard')
     } catch {
       setError('Invalid code. Please try again.')
     } finally {
