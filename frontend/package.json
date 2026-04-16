@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:e2e": "node scripts/e2e-smoke.mjs"
+    "test:e2e": "node ../scripts/e2e-smoke.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",
