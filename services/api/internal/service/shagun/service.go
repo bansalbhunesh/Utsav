@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/bhune/utsav/services/api/internal/repository/shagunrepo"
 )
@@ -30,6 +31,16 @@ func (s *Service) LogCashShagun(ctx context.Context, eventID uuid.UUID, input sh
 		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Amount must be greater than zero."}
 	}
 	if err := s.repo.LogCashShagun(ctx, eventID, input); err != nil {
+		return &ServiceError{Status: http.StatusBadRequest, Code: "INSERT_FAILED", Message: "Unable to log cash shagun."}
+	}
+	return nil
+}
+
+func (s *Service) LogCashShagunTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, input shagunrepo.CashShagunInput) *ServiceError {
+	if input.AmountINR <= 0 {
+		return &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Amount must be greater than zero."}
+	}
+	if err := s.repo.LogCashShagunTx(ctx, tx, eventID, input); err != nil {
 		return &ServiceError{Status: http.StatusBadRequest, Code: "INSERT_FAILED", Message: "Unable to log cash shagun."}
 	}
 	return nil

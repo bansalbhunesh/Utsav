@@ -69,6 +69,21 @@ func startIdempotencyKeyCleanup(pool *pgxpool.Pool) {
 	}()
 }
 
+func startWebhookDeliveriesCleanup(pool *pgxpool.Pool) {
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for range t.C {
+			cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			_, err := pool.Exec(cctx, `DELETE FROM webhook_deliveries WHERE created_at < now() - interval '90 days'`)
+			cancel()
+			if err != nil {
+				log.Printf("WARN: webhook_deliveries cleanup: %v", err)
+			}
+		}
+	}()
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -110,6 +125,7 @@ func main() {
 		}
 	}
 	startIdempotencyKeyCleanup(pool)
+	startWebhookDeliveriesCleanup(pool)
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)

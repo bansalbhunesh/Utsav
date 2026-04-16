@@ -81,3 +81,41 @@ func (s *Service) MarkOrderPaid(ctx context.Context, orderID string) *ServiceErr
 	}
 	return nil
 }
+
+// CreateCheckoutIdempotent creates a checkout in the same database transaction as idempotency reservation.
+func (s *Service) CreateCheckoutIdempotent(ctx context.Context, userID uuid.UUID, tier, eventID, orderID, idempotencyKey, fingerprint string) (*CreateCheckoutResult, bool, *ServiceError) {
+	amount := TierPricePaise(tier)
+	if amount <= 0 {
+		return nil, false, &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_TIER", Message: "Billing tier is invalid."}
+	}
+	id, rid, replay, err := s.repo.CreateCheckoutIdempotent(ctx, "billing_checkout", idempotencyKey, fingerprint, billingrepo.CreateCheckoutInput{
+		UserID:  userID,
+		EventID: eventID,
+		Tier:    tier,
+		OrderID: orderID,
+	})
+	if err != nil {
+		if errors.Is(err, billingrepo.ErrIdempotencyFingerprintMismatch) {
+			return nil, false, &ServiceError{Status: http.StatusConflict, Code: "IDEMPOTENCY_CONFLICT", Message: "Idempotency key was already used for a different request."}
+		}
+		return nil, false, &ServiceError{Status: http.StatusBadRequest, Code: "CHECKOUT_FAILED", Message: "Unable to create checkout."}
+	}
+	return &CreateCheckoutResult{ID: id, OrderID: rid, AmountPaise: amount}, replay, nil
+}
+
+// MarkOrderPaidFromWebhook applies Razorpay webhook deduplication and order payment in one transaction.
+func (s *Service) MarkOrderPaidFromWebhook(ctx context.Context, provider, eventKey, payloadHash, orderID string) *ServiceError {
+	if strings.TrimSpace(orderID) == "" {
+		return &ServiceError{Status: http.StatusBadRequest, Code: "MISSING_ORDER_ID", Message: "Order id is required."}
+	}
+	if err := s.repo.MarkOrderPaidFromWebhook(ctx, provider, eventKey, payloadHash, orderID); err != nil {
+		if errors.Is(err, billingrepo.ErrWebhookDedupePayloadMismatch) {
+			return &ServiceError{Status: http.StatusConflict, Code: "WEBHOOK_DEDUPE_CONFLICT", Message: "Webhook event id was reused with a different payload."}
+		}
+		if errors.Is(err, billingrepo.ErrCheckoutNotFound) {
+			return &ServiceError{Status: http.StatusNotFound, Code: "CHECKOUT_NOT_FOUND", Message: "Checkout not found for order."}
+		}
+		return &ServiceError{Status: http.StatusInternalServerError, Code: "BILLING_PERSIST_FAILED", Message: "Unable to persist billing update."}
+	}
+	return nil
+}

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	authtoken "github.com/bhune/utsav/services/api/internal/auth"
 	"github.com/bhune/utsav/services/api/internal/otp"
@@ -141,6 +143,7 @@ func (s *Service) RequestOTP(ctx context.Context, phone, clientIP string) *Servi
 	}
 	if s.otpDispatcher != nil {
 		if err := s.otpDispatcher.DispatchOTP(ctx, phone, code); err != nil {
+			_ = s.repo.DeletePhoneOTPChallenges(ctx, phone)
 			return &ServiceError{Status: http.StatusBadGateway, Code: "OTP_SEND_FAILED", Message: "Unable to send OTP code."}
 		}
 	}
@@ -223,24 +226,30 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (*RefreshRes
 	}
 
 	sum := sha256.Sum256(raw)
-	userID, err := s.repo.ConsumeRefreshTokenHash(ctx, hex.EncodeToString(sum[:]))
-	if err != nil {
-		return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "INVALID_REFRESH", Message: "Refresh token is invalid or expired."}
-	}
+	oldHash := hex.EncodeToString(sum[:])
 
-	access, err := authtoken.SignAccessToken(userID, s.jwtSecret, 48*time.Hour)
-	if err != nil {
-		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "TOKEN_SIGN_FAILED", Message: "Unable to create access token."}
-	}
 	rawRefresh := make([]byte, 32)
 	if _, err := rand.Read(rawRefresh); err != nil {
 		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "ENTROPY_FAILED", Message: "Unable to create refresh token."}
 	}
 	sum2 := sha256.Sum256(rawRefresh)
-	if err := s.repo.InsertRefreshTokenHash(ctx, userID, hex.EncodeToString(sum2[:])); err != nil {
+	newHash := hex.EncodeToString(sum2[:])
+
+	var access string
+	err = s.repo.RotateRefreshToken(ctx, oldHash, newHash, func(userID uuid.UUID) error {
+		var err error
+		access, err = authtoken.SignAccessToken(userID, s.jwtSecret, 48*time.Hour)
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, &ServiceError{Status: http.StatusUnauthorized, Code: "INVALID_REFRESH", Message: "Refresh token is invalid or expired."}
+		}
+		if errors.Is(err, authrepo.ErrRefreshAccessSignFailed) {
+			return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "TOKEN_SIGN_FAILED", Message: "Unable to create access token."}
+		}
 		return nil, &ServiceError{Status: http.StatusInternalServerError, Code: "REFRESH_PERSIST_FAILED", Message: "Unable to persist refresh token."}
 	}
-	_ = s.repo.PruneRefreshTokensForUser(ctx, userID, 10)
 
 	return &RefreshResult{
 		AccessToken:  access,

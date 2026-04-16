@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,6 +34,7 @@ type CreateInput struct {
 type Repository interface {
 	List(ctx context.Context, eventID uuid.UUID) ([]Broadcast, error)
 	Create(ctx context.Context, in CreateInput) error
+	CreateTx(ctx context.Context, tx pgx.Tx, in CreateInput) error
 }
 
 type PGRepository struct{ pool *pgxpool.Pool }
@@ -77,6 +79,15 @@ func (r *PGRepository) List(ctx context.Context, eventID uuid.UUID) ([]Broadcast
 func (r *PGRepository) Create(ctx context.Context, in CreateInput) error {
 	blob, _ := json.Marshal(in.Audience)
 	_, err := r.pool.Exec(ctx, `
+		INSERT INTO broadcasts (event_id, title, body, image_url, audience, announcement_type, created_by_user_id)
+		VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)`,
+		in.EventID, in.Title, in.Body, nullable(in.ImageURL), blob, in.Type, in.CreatedByUserID)
+	return err
+}
+
+func (r *PGRepository) CreateTx(ctx context.Context, tx pgx.Tx, in CreateInput) error {
+	blob, _ := json.Marshal(in.Audience)
+	_, err := tx.Exec(ctx, `
 		INSERT INTO broadcasts (event_id, title, body, image_url, audience, announcement_type, created_by_user_id)
 		VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7)`,
 		in.EventID, in.Title, in.Body, nullable(in.ImageURL), blob, in.Type, in.CreatedByUserID)

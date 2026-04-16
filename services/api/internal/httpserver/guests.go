@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -109,16 +110,25 @@ func (s *Server) postGuest(c *gin.Context) {
 	}
 	rawBody, _ := json.Marshal(body)
 	fingerprint := hashFingerprint(eventID.String(), string(rawBody))
-	idempotentOK, err := s.reserveIdempotencyKey(c.Request.Context(), "guest_upsert", idempotencyKey, fingerprint)
+	ctx := c.Request.Context()
+	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		writeAPIError(c, http.StatusInternalServerError, "IDEMPOTENCY_FAILED", "Unable to validate idempotency key.")
 		return
 	}
-	if !idempotentOK {
-		writeAPIError(c, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used for a different request.")
+	defer tx.Rollback(ctx)
+
+	replay, err := reserveIdempotencyInTx(ctx, tx, "guest_upsert", idempotencyKey, fingerprint)
+	if err != nil {
+		if errors.Is(err, ErrIdempotencyFingerprintMismatch) {
+			writeAPIError(c, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used for a different request.")
+			return
+		}
+		writeAPIError(c, http.StatusInternalServerError, "IDEMPOTENCY_FAILED", "Unable to validate idempotency key.")
 		return
 	}
-	guestID, svcErr := s.GuestService.UpsertGuest(c.Request.Context(), eventID, guestrepo.GuestInput{
+
+	in := guestrepo.GuestInput{
 		Name:         body.Name,
 		Phone:        body.Phone,
 		Email:        body.Email,
@@ -126,11 +136,28 @@ func (s *Server) postGuest(c *gin.Context) {
 		Side:         body.Side,
 		Tags:         body.Tags,
 		GroupID:      body.GroupID,
-	})
-	if svcErr != nil {
-		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+	}
+	var guestID string
+	if replay {
+		gid, e := s.GuestService.GuestIDByEventPhoneTx(ctx, tx, eventID, in.Phone)
+		if e != nil {
+			writeAPIError(c, e.Status, e.Code, e.Message)
+			return
+		}
+		guestID = gid
+	} else {
+		gid, e := s.GuestService.UpsertGuestTx(ctx, tx, eventID, in)
+		if e != nil {
+			writeAPIError(c, e.Status, e.Code, e.Message)
+			return
+		}
+		guestID = gid
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeAPIError(c, http.StatusInternalServerError, "UPSERT_FAILED", "Unable to save guest.")
 		return
 	}
+	s.GuestService.InvalidateRelationshipOverview(ctx, eventID)
 	c.JSON(http.StatusCreated, gin.H{"id": guestID})
 }
 
@@ -167,28 +194,42 @@ func (s *Server) postCashShagun(c *gin.Context) {
 	}
 	rawBody, _ := json.Marshal(body)
 	fingerprint := hashFingerprint(eventID.String(), string(rawBody))
-	idempotentOK, err := s.reserveIdempotencyKey(c.Request.Context(), "cash_shagun_create", idempotencyKey, fingerprint)
+	ctx := c.Request.Context()
+	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		writeAPIError(c, http.StatusInternalServerError, "IDEMPOTENCY_FAILED", "Unable to validate idempotency key.")
 		return
 	}
-	if !idempotentOK {
-		writeAPIError(c, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used for a different request.")
+	defer tx.Rollback(ctx)
+
+	replay, err := reserveIdempotencyInTx(ctx, tx, "cash_shagun_create", idempotencyKey, fingerprint)
+	if err != nil {
+		if errors.Is(err, ErrIdempotencyFingerprintMismatch) {
+			writeAPIError(c, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency key was already used for a different request.")
+			return
+		}
+		writeAPIError(c, http.StatusInternalServerError, "IDEMPOTENCY_FAILED", "Unable to validate idempotency key.")
 		return
 	}
-	svcErr := s.ShagunService.LogCashShagun(c.Request.Context(), eventID, shagunrepo.CashShagunInput{
-		GuestID:    body.GuestID,
-		GuestPhone: body.GuestPhone,
-		AmountINR:  body.AmountINR,
-		SubEventID: body.SubEventID,
-		Notes:      body.Notes,
-	})
-	if svcErr != nil {
-		writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+	if !replay {
+		svcErr := s.ShagunService.LogCashShagunTx(ctx, tx, eventID, shagunrepo.CashShagunInput{
+			GuestID:    body.GuestID,
+			GuestPhone: body.GuestPhone,
+			AmountINR:  body.AmountINR,
+			SubEventID: body.SubEventID,
+			Notes:      body.Notes,
+		})
+		if svcErr != nil {
+			writeAPIError(c, svcErr.Status, svcErr.Code, svcErr.Message)
+			return
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeAPIError(c, http.StatusBadRequest, "INSERT_FAILED", "Unable to log cash shagun.")
 		return
 	}
 	if s.GuestService != nil {
-		s.GuestService.InvalidateRelationshipOverview(c.Request.Context(), eventID)
+		s.GuestService.InvalidateRelationshipOverview(ctx, eventID)
 	}
 	c.JSON(http.StatusCreated, gin.H{"ok": true})
 }

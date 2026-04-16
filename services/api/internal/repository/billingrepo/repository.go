@@ -29,11 +29,17 @@ type CreateCheckoutInput struct {
 
 type Repository interface {
 	CreateCheckout(ctx context.Context, input CreateCheckoutInput) (string, error)
+	CreateCheckoutIdempotent(ctx context.Context, scope, idempotencyKey, fingerprint string, input CreateCheckoutInput) (checkoutID string, orderID string, replay bool, err error)
 	ListCheckouts(ctx context.Context, userID uuid.UUID) ([]Checkout, error)
 	MarkOrderPaidAndFetch(ctx context.Context, orderID string) (string, any, error)
+	MarkOrderPaidFromWebhook(ctx context.Context, provider, eventKey, payloadHash, orderID string) error
 }
 
-var ErrCheckoutNotFound = errors.New("checkout not found")
+var (
+	ErrCheckoutNotFound               = errors.New("checkout not found")
+	ErrWebhookDedupePayloadMismatch   = errors.New("webhook event_key replay with different payload")
+	ErrIdempotencyFingerprintMismatch = errors.New("billingrepo: idempotency fingerprint mismatch")
+)
 
 type PGRepository struct {
 	pool *pgxpool.Pool
@@ -59,6 +65,83 @@ func (r *PGRepository) CreateCheckout(ctx context.Context, input CreateCheckoutI
 		return "", err
 	}
 	return id.String(), nil
+}
+
+// CreateCheckoutIdempotent reserves the idempotency key and creates the checkout in one transaction.
+// On replay (same key and fingerprint), returns the existing checkout id and order id without inserting again.
+func (r *PGRepository) CreateCheckoutIdempotent(ctx context.Context, scope, idempotencyKey, fingerprint string, input CreateCheckoutInput) (checkoutID string, orderID string, replay bool, err error) {
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if idempotencyKey == "" {
+		return "", "", false, fmt.Errorf("missing idempotency key")
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", "", false, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM idempotency_keys WHERE scope=$1 AND key=$2 AND expires_at < now()
+	`, scope, idempotencyKey); err != nil {
+		return "", "", false, err
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO idempotency_keys (scope, key, fingerprint, expires_at)
+		VALUES ($1, $2, $3, now() + interval '24 hours')
+		ON CONFLICT (scope, key) DO NOTHING
+	`, scope, idempotencyKey, fingerprint)
+	if err != nil {
+		return "", "", false, err
+	}
+	if tag.RowsAffected() == 0 {
+		var existing string
+		err = tx.QueryRow(ctx, `
+			SELECT fingerprint FROM idempotency_keys
+			WHERE scope=$1 AND key=$2 AND expires_at > now()
+			FOR UPDATE
+		`, scope, idempotencyKey).Scan(&existing)
+		if err != nil {
+			return "", "", false, err
+		}
+		if existing != fingerprint {
+			return "", "", false, ErrIdempotencyFingerprintMismatch
+		}
+		var cid string
+		var rid string
+		err = tx.QueryRow(ctx, `
+			SELECT id::text, razorpay_order_id FROM billing_checkouts
+			WHERE user_id=$1 AND idempotency_key=$2
+			FOR UPDATE`,
+			input.UserID, idempotencyKey,
+		).Scan(&cid, &rid)
+		if err != nil {
+			return "", "", false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return "", "", false, err
+		}
+		return cid, rid, true, nil
+	}
+
+	var eid any
+	if input.EventID != "" {
+		if u, err := uuid.Parse(input.EventID); err == nil {
+			eid = u
+		}
+	}
+	var id uuid.UUID
+	err = tx.QueryRow(ctx, `
+		INSERT INTO billing_checkouts (user_id, event_id, tier, razorpay_order_id, status, idempotency_key)
+		VALUES ($1,$2,$3,$4,'created',$5) RETURNING id`,
+		input.UserID, eid, strings.TrimSpace(strings.ToLower(input.Tier)), input.OrderID, idempotencyKey,
+	).Scan(&id)
+	if err != nil {
+		return "", "", false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", "", false, err
+	}
+	return id.String(), input.OrderID, false, nil
 }
 
 func (r *PGRepository) ListCheckouts(ctx context.Context, userID uuid.UUID) ([]Checkout, error) {
@@ -87,15 +170,7 @@ func (r *PGRepository) ListCheckouts(ctx context.Context, userID uuid.UUID) ([]C
 	return out, nil
 }
 
-func (r *PGRepository) MarkOrderPaidAndFetch(ctx context.Context, orderID string) (string, any, error) {
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return "", nil, err
-	}
-	defer tx.Rollback(ctx)
-
-	var tier string
-	var eventID *uuid.UUID
+func markOrderPaidInTx(ctx context.Context, tx pgx.Tx, orderID string) (tier string, eventID *uuid.UUID, err error) {
 	var status string
 	err = tx.QueryRow(ctx, `
 		SELECT tier, event_id, status FROM billing_checkouts WHERE razorpay_order_id=$1
@@ -116,8 +191,59 @@ func (r *PGRepository) MarkOrderPaidAndFetch(ctx context.Context, orderID string
 			return "", nil, err
 		}
 	}
+	return tier, eventID, nil
+}
+
+func (r *PGRepository) MarkOrderPaidAndFetch(ctx context.Context, orderID string) (string, any, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	tier, eventID, err := markOrderPaidInTx(ctx, tx, orderID)
+	if err != nil {
+		return "", nil, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", nil, err
 	}
 	return tier, eventID, nil
+}
+
+// MarkOrderPaidFromWebhook records webhook deduplication and marks the order paid in a single transaction.
+func (r *PGRepository) MarkOrderPaidFromWebhook(ctx context.Context, provider, eventKey, payloadHash, orderID string) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO webhook_deliveries (provider, event_key, payload_hash)
+		VALUES ($1,$2,$3)
+		ON CONFLICT (provider, event_key) DO NOTHING
+	`, provider, eventKey, payloadHash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		var existing string
+		err = tx.QueryRow(ctx, `
+			SELECT payload_hash FROM webhook_deliveries
+			WHERE provider=$1 AND event_key=$2
+			FOR UPDATE
+		`, provider, eventKey).Scan(&existing)
+		if err != nil {
+			return err
+		}
+		if existing != payloadHash {
+			return ErrWebhookDedupePayloadMismatch
+		}
+	}
+
+	if _, _, err := markOrderPaidInTx(ctx, tx, orderID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

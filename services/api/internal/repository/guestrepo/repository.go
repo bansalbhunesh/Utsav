@@ -63,6 +63,8 @@ type ListGuestsParams struct {
 type Repository interface {
 	ListGuests(ctx context.Context, p ListGuestsParams) ([]Guest, error)
 	UpsertGuest(ctx context.Context, eventID uuid.UUID, input GuestInput) (string, error)
+	UpsertGuestTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, input GuestInput) (string, error)
+	GuestIDByEventPhoneTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, phone string) (string, error)
 	ImportGuestsCSV(ctx context.Context, eventID uuid.UUID, rawCSV string) (*ImportResult, error)
 }
 
@@ -314,6 +316,44 @@ func (r *PGRepository) UpsertGuest(ctx context.Context, eventID uuid.UUID, input
 			relationship=EXCLUDED.relationship, side=EXCLUDED.side, tags=EXCLUDED.tags, updated_at=now()
 		RETURNING id`,
 		eventID, gid, input.Name, input.Phone, input.Email, input.Relationship, input.Side, tags,
+	).Scan(&guestID)
+	if err != nil {
+		return "", err
+	}
+	return guestID, nil
+}
+
+func (r *PGRepository) UpsertGuestTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, input GuestInput) (string, error) {
+	var gid any
+	if input.GroupID != nil && *input.GroupID != "" {
+		if g, err := uuid.Parse(*input.GroupID); err == nil {
+			gid = g
+		}
+	}
+	tags := any([]string{})
+	if input.Tags != nil {
+		tags = input.Tags
+	}
+	var guestID string
+	err := tx.QueryRow(ctx, `
+		INSERT INTO guests (event_id, group_id, name, phone, email, relationship, side, tags)
+		VALUES ($1,$2,$3,$4,NULLIF($5,''),NULLIF($6,''),NULLIF($7,''),$8::text[])
+		ON CONFLICT (event_id, phone) DO UPDATE SET name=EXCLUDED.name, email=EXCLUDED.email,
+			relationship=EXCLUDED.relationship, side=EXCLUDED.side, tags=EXCLUDED.tags, updated_at=now()
+		RETURNING id`,
+		eventID, gid, input.Name, input.Phone, input.Email, input.Relationship, input.Side, tags,
+	).Scan(&guestID)
+	if err != nil {
+		return "", err
+	}
+	return guestID, nil
+}
+
+func (r *PGRepository) GuestIDByEventPhoneTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, phone string) (string, error) {
+	var guestID string
+	err := tx.QueryRow(ctx, `
+		SELECT id::text FROM guests WHERE event_id=$1 AND phone=$2 LIMIT 1`,
+		eventID, phone,
 	).Scan(&guestID)
 	if err != nil {
 		return "", err

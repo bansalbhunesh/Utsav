@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/bhune/utsav/services/api/internal/repository/guestrepo"
 )
@@ -26,6 +27,14 @@ func (r *recordingRepo) ListGuests(_ context.Context, p guestrepo.ListGuestsPara
 }
 
 func (r *recordingRepo) UpsertGuest(context.Context, uuid.UUID, guestrepo.GuestInput) (string, error) {
+	return "", nil
+}
+
+func (r *recordingRepo) UpsertGuestTx(context.Context, pgx.Tx, uuid.UUID, guestrepo.GuestInput) (string, error) {
+	return "", nil
+}
+
+func (r *recordingRepo) GuestIDByEventPhoneTx(context.Context, pgx.Tx, uuid.UUID, string) (string, error) {
 	return "", nil
 }
 

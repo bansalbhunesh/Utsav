@@ -141,6 +141,7 @@ func (s *Service) RequestOTP(ctx context.Context, eventID uuid.UUID, slug, phone
 	}
 	if s.otpDispatcher != nil {
 		if err := s.otpDispatcher.DispatchOTP(ctx, phone, code); err != nil {
+			_ = s.repo.DeleteRSVPOTPChallenges(ctx, eventID, phone)
 			return &ServiceError{Status: http.StatusBadGateway, Code: "OTP_SEND_FAILED", Message: "Unable to send RSVP OTP."}
 		}
 	}

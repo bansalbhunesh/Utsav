@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/bhune/utsav/services/api/internal/cache"
 	"github.com/bhune/utsav/services/api/internal/repository/guestrepo"
@@ -296,6 +297,36 @@ func (s *Service) UpsertGuest(ctx context.Context, eventID uuid.UUID, input gues
 		return "", &ServiceError{Status: http.StatusBadRequest, Code: "UPSERT_FAILED", Message: "Unable to save guest."}
 	}
 	s.InvalidateRelationshipOverview(ctx, eventID)
+	return guestID, nil
+}
+
+// UpsertGuestTx is the same as UpsertGuest but runs on an existing transaction (caller commits).
+func (s *Service) UpsertGuestTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, input guestrepo.GuestInput) (string, *ServiceError) {
+	input.Name = strings.TrimSpace(input.Name)
+	input.Phone = strings.TrimSpace(input.Phone)
+	if input.Name == "" || input.Phone == "" {
+		return "", &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Name and phone are required."}
+	}
+	guestID, err := s.repo.UpsertGuestTx(ctx, tx, eventID, input)
+	if err != nil {
+		return "", &ServiceError{Status: http.StatusBadRequest, Code: "UPSERT_FAILED", Message: "Unable to save guest."}
+	}
+	return guestID, nil
+}
+
+// GuestIDByEventPhoneTx returns the guest id for an event/phone pair within tx (idempotent replay path).
+func (s *Service) GuestIDByEventPhoneTx(ctx context.Context, tx pgx.Tx, eventID uuid.UUID, phone string) (string, *ServiceError) {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return "", &ServiceError{Status: http.StatusBadRequest, Code: "INVALID_BODY", Message: "Phone is required."}
+	}
+	guestID, err := s.repo.GuestIDByEventPhoneTx(ctx, tx, eventID, phone)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", &ServiceError{Status: http.StatusBadRequest, Code: "UPSERT_REPLAY_INCOMPLETE", Message: "Unable to resolve guest for idempotent replay."}
+		}
+		return "", &ServiceError{Status: http.StatusBadRequest, Code: "UPSERT_FAILED", Message: "Unable to load guest."}
+	}
 	return guestID, nil
 }
 
